@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: text-to-learn-postgres
+    environment:
+      POSTGRES_DB: text_to_learn
+      POSTGRES_USER: text_to_learn
+      POSTGRES_PASSWORD: text_to_learn
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
