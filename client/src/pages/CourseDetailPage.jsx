@@ -19,7 +19,7 @@ export default function CourseDetailPage() {
         <article>
           <span>Module 1</span>
           <h2>Foundations</h2>
-          <Link to={ROUTES.lesson('demo-lesson')}>Open sample lesson</Link>
+          <Link to={ROUTES.courseLesson(courseId, 0, 0)}>Open sample lesson</Link>
         </article>
       </div>
     </section>

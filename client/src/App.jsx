@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/auth/ProtectedRoute.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
 import { AppProvider } from './context/AppContext.jsx';
@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 import SignupPage from './pages/SignupPage.jsx';
 import Auth0ProviderWithNavigate from './services/auth/Auth0ProviderWithNavigate.jsx';
+import { ROUTES } from './utils/routes.js';
 
 export default function App() {
   return (
@@ -29,12 +30,16 @@ export default function App() {
                 }
               />
               <Route
-                path="lessons/:lessonId"
+                path="courses/:courseId/module/:moduleIndex/lesson/:lessonIndex"
                 element={
                   <ProtectedRoute>
                     <LessonDetailPage />
                   </ProtectedRoute>
                 }
+              />
+              <Route
+                path="lessons/:lessonId"
+                element={<Navigate to={ROUTES.courseLesson('demo-course', 0, 0)} replace />}
               />
               <Route path="*" element={<NotFoundPage />} />
             </Route>

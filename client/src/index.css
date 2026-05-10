@@ -33,6 +33,10 @@ input {
   min-height: 100vh;
 }
 
+.app-main {
+  min-width: 0;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -117,6 +121,46 @@ input {
 
 .content-panel {
   padding: 48px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 76px;
+  border-bottom: 1px solid #dbe3ea;
+  background: #ffffff;
+  padding: 16px 48px;
+}
+
+.topbar h2,
+.topbar p {
+  margin: 0;
+}
+
+.topbar h2 {
+  font-size: 1.15rem;
+}
+
+.topbar-kicker {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.topbar-user {
+  max-width: 260px;
+  overflow: hidden;
+  border: 1px solid #dbe3ea;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 8px 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .page-stack {
@@ -213,6 +257,43 @@ h2 {
   opacity: 0.68;
 }
 
+.loading-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  font-weight: 700;
+  padding: 12px 14px;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #bfdbfe;
+  border-top-color: #1d4ed8;
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+}
+
+.error-message {
+  margin-bottom: 18px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 14px;
+}
+
+.error-message p {
+  margin: 6px 0 0;
+  color: #7f1d1d;
+  line-height: 1.5;
+}
+
 .prompt-panel > p,
 .lesson-preview p {
   margin: 14px 0 0;
@@ -243,6 +324,159 @@ code {
   padding: 2px 6px;
 }
 
+.lesson-renderer {
+  display: grid;
+  gap: 16px;
+}
+
+.lesson-block,
+.lesson-empty {
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 22px;
+}
+
+.lesson-block h2 {
+  margin: 0;
+  color: #172026;
+  font-size: 1.75rem;
+  line-height: 1.2;
+}
+
+.lesson-block h3 {
+  margin: 0 0 14px;
+  color: #172026;
+  font-size: 1.1rem;
+}
+
+.paragraph-block p,
+.lesson-empty p,
+.unsupported-block p,
+.muted-text {
+  margin: 0;
+  color: #52616d;
+  line-height: 1.75;
+}
+
+.code-block {
+  overflow: hidden;
+  padding: 0;
+}
+
+.code-block-header {
+  display: flex;
+  justify-content: flex-end;
+  border-bottom: 1px solid #dbe3ea;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 10px 14px;
+  text-transform: uppercase;
+}
+
+.code-block pre {
+  margin: 0;
+  overflow-x: auto;
+  background: #111827;
+  color: #e5e7eb;
+  padding: 18px;
+}
+
+.code-block code {
+  display: block;
+  min-width: max-content;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.video-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #111827;
+  aspect-ratio: 16 / 9;
+}
+
+.video-frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.mcq-options {
+  display: grid;
+  gap: 10px;
+}
+
+.mcq-option {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172026;
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.mcq-option span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  background: #e8f0ff;
+  color: #1d4ed8;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.mcq-option:hover,
+.mcq-option.is-selected {
+  border-color: #2563eb;
+}
+
+.mcq-option.is-correct {
+  border-color: #15803d;
+  background: #f0fdf4;
+}
+
+.mcq-option.is-incorrect {
+  border-color: #b91c1c;
+  background: #fef2f2;
+}
+
+.mcq-feedback {
+  margin: 14px 0 0;
+  font-weight: 700;
+}
+
+.mcq-feedback.correct {
+  color: #15803d;
+}
+
+.mcq-feedback.incorrect {
+  color: #b91c1c;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -265,6 +499,16 @@ code {
 
   .content-panel {
     padding: 28px 18px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px 18px;
+  }
+
+  .topbar-user {
+    max-width: 100%;
   }
 
   .prompt-row {
