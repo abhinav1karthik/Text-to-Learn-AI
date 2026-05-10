@@ -89,6 +89,32 @@ input {
   color: #1d4ed8;
 }
 
+.auth-card {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.auth-card strong,
+.auth-card small {
+  display: block;
+}
+
+.auth-card small {
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .content-panel {
   padding: 48px;
 }
@@ -174,6 +200,12 @@ h2 {
   color: #ffffff;
   cursor: pointer;
   padding: 0 18px;
+}
+
+.button-secondary {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #172026;
 }
 
 .button:disabled {

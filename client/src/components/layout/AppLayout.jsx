@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
+import AuthStatus from '../auth/AuthStatus.jsx';
 import { ROUTES } from '../../utils/routes.js';
 
 export default function AppLayout() {
@@ -14,9 +15,12 @@ export default function AppLayout() {
         </NavLink>
         <nav className="nav-list" aria-label="Primary navigation">
           <NavLink to={ROUTES.home}>Home</NavLink>
+          <NavLink to={ROUTES.login}>Log in</NavLink>
+          <NavLink to={ROUTES.signup}>Sign up</NavLink>
           <NavLink to={ROUTES.course('demo-course')}>Course Preview</NavLink>
           <NavLink to={ROUTES.lesson('demo-lesson')}>Lesson Preview</NavLink>
         </nav>
+        <AuthStatus />
       </aside>
       <main className="content-panel">
         <Outlet />

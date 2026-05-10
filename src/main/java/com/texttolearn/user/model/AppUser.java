@@ -45,6 +45,13 @@ public class AppUser {
         this.updatedAt = this.createdAt;
     }
 
+    public void updateProfile(String email, String name, String pictureUrl) {
+        this.email = email;
+        this.name = name;
+        this.pictureUrl = pictureUrl;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() {
         return id;
     }
