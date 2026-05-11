@@ -78,6 +78,11 @@ public class Course {
         module.assignToCourse(this);
     }
 
+    public void replaceTagsJson(String tags) {
+        this.tags = tags;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() {
         return id;
     }

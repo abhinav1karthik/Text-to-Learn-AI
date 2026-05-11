@@ -1,5 +1,6 @@
 package com.texttolearn.common.error;
 
+import com.texttolearn.ai.error.AiGenerationException;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,6 +24,11 @@ public class GlobalExceptionHandler {
         exception.getBindingResult().getFieldErrors()
                 .forEach(error -> fieldErrors.put(error.getField(), error.getDefaultMessage()));
         return build(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors);
+    }
+
+    @ExceptionHandler(AiGenerationException.class)
+    public ResponseEntity<ApiError> handleAiGeneration(AiGenerationException exception) {
+        return build(HttpStatus.BAD_GATEWAY, exception.getMessage(), Map.of());
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String message, Map<String, String> fieldErrors) {

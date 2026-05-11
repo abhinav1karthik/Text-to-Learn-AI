@@ -38,9 +38,12 @@ export default function MCQBlock({ block }) {
       </div>
 
       {hasAnswered && (
-        <p className={isCorrect ? 'mcq-feedback correct' : 'mcq-feedback incorrect'}>
-          {isCorrect ? 'Correct answer.' : 'Not quite. Try reviewing the explanation above.'}
-        </p>
+        <div>
+          <p className={isCorrect ? 'mcq-feedback correct' : 'mcq-feedback incorrect'}>
+            {isCorrect ? 'Correct answer.' : 'Not quite. Try reviewing the explanation.'}
+          </p>
+          {block.explanation ? <p className="mcq-explanation">{block.explanation}</p> : null}
+        </div>
       )}
     </section>
   );

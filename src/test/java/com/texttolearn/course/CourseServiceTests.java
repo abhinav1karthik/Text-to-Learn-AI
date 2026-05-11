@@ -1,0 +1,152 @@
+package com.texttolearn.course;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.texttolearn.ai.dto.GeneratedCourseOutline;
+import com.texttolearn.ai.dto.GeneratedLessonContent;
+import com.texttolearn.ai.dto.GeneratedModuleOutline;
+import com.texttolearn.ai.service.CourseAiService;
+import com.texttolearn.course.dto.CourseResponse;
+import com.texttolearn.course.dto.LessonResponse;
+import com.texttolearn.course.model.Course;
+import com.texttolearn.course.model.CourseStatus;
+import com.texttolearn.course.model.Lesson;
+import com.texttolearn.course.model.LessonStatus;
+import com.texttolearn.course.repository.CourseRepository;
+import com.texttolearn.course.service.CourseService;
+import com.texttolearn.user.model.AppUser;
+import com.texttolearn.user.repository.AppUserRepository;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.transaction.annotation.Transactional;
+
+@SpringBootTest
+class CourseServiceTests {
+
+    @Autowired
+    private AppUserRepository appUserRepository;
+
+    @Autowired
+    private CourseService courseService;
+
+    @Autowired
+    private CourseRepository courseRepository;
+
+    @Test
+    @Transactional
+    void createsCourseFromGeneratedOutline() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|course-service-user", "student@example.com", "Student", null)
+        );
+
+        CourseResponse course = courseService.createCourse(user, "Segment Trees and Its Applications");
+
+        assertThat(course.id()).isNotNull();
+        assertThat(course.prompt()).isEqualTo("Segment Trees and Its Applications");
+        assertThat(course.title()).isEqualTo("Segment Trees for Range Queries");
+        assertThat(course.status()).isEqualTo(CourseStatus.OUTLINE_READY);
+        assertThat(course.tags()).containsExactly("data-structures", "algorithms");
+        assertThat(course.modules()).hasSize(1);
+        assertThat(course.modules().getFirst().lessons()).hasSize(2);
+        assertThat(course.modules().getFirst().lessons().getFirst().status()).isEqualTo(LessonStatus.PLANNED);
+    }
+
+    @Test
+    @Transactional
+    void generatesLessonContentLazilyAndCachesIt() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|lesson-service-user", "lesson@example.com", "Lesson Student", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Segment Trees and Its Applications");
+
+        LessonResponse generatedLesson = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 0);
+        LessonResponse cachedLesson = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 0);
+
+        assertThat(generatedLesson.title()).isEqualTo("What is a Segment Tree?");
+        assertThat(generatedLesson.status()).isEqualTo(LessonStatus.GENERATED);
+        assertThat(generatedLesson.objectives()).hasSize(1);
+        assertThat(generatedLesson.objectives().getFirst()).startsWith("Understand call ");
+        assertThat(generatedLesson.content()).hasSize(2);
+        assertThat(generatedLesson.content().getFirst()).containsEntry("type", "heading");
+        assertThat(cachedLesson.objectives()).isEqualTo(generatedLesson.objectives());
+    }
+
+    @Test
+    @Transactional
+    void returnsAlreadyGeneratedLessonWhenOldSavedCodeBlockIsEmpty() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|old-code-user", "old-code@example.com", "Old Code Student", null)
+        );
+        CourseResponse courseResponse = courseService.createCourse(user, "Segment Trees and Its Applications");
+        Course course = courseRepository.findById(courseResponse.id()).orElseThrow();
+        Lesson lesson = course.getModules().getFirst().getLessons().getFirst();
+        lesson.replaceGeneratedContent(
+                "[\"Use the saved lesson\"]",
+                "[{\"type\":\"code\",\"language\":\"java\",\"text\":\"\"}]"
+        );
+        courseRepository.saveAndFlush(course);
+
+        LessonResponse response = courseService.getOrGenerateLessonForUser(user, courseResponse.id(), 0, 0);
+
+        assertThat(response.status()).isEqualTo(LessonStatus.GENERATED);
+        assertThat(response.objectives()).containsExactly("Use the saved lesson");
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().getFirst()).containsEntry("type", "paragraph");
+        assertThat(response.content().getFirst()).containsEntry(
+                "text",
+                "Code example was not available for this section."
+        );
+    }
+
+    @TestConfiguration
+    static class FakeAiConfig {
+
+        @Bean
+        @Primary
+        CourseAiService fakeCourseAiService() {
+            AtomicInteger lessonGenerationCount = new AtomicInteger();
+            return new CourseAiService() {
+                @Override
+                public GeneratedCourseOutline generateCourseOutline(String topic) {
+                    return new GeneratedCourseOutline(
+                            "Segment Trees for Range Queries",
+                            "A focused course on segment trees.",
+                            List.of("Data-Structures", "Algorithms"),
+                            List.of(new GeneratedModuleOutline(
+                                    "Foundations",
+                                    "Core ideas behind segment trees.",
+                                    List.of("What is a Segment Tree?", "Building the Tree")
+                            ))
+                    );
+                }
+
+                @Override
+                public GeneratedLessonContent generateLessonContent(
+                        String courseTitle,
+                        String moduleTitle,
+                        String lessonTitle
+                ) {
+                    int callNumber = lessonGenerationCount.incrementAndGet();
+                    return new GeneratedLessonContent(
+                            lessonTitle,
+                            List.of("Understand call " + callNumber),
+                            List.of(
+                                    Map.of("type", "heading", "text", lessonTitle),
+                                    Map.of(
+                                            "type", "paragraph",
+                                            "text", courseTitle + " / " + moduleTitle
+                                    )
+                            )
+                    );
+                }
+            };
+        }
+    }
+}

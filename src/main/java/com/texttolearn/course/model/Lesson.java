@@ -70,6 +70,14 @@ public class Lesson {
         this.module = module;
     }
 
+    public void replaceGeneratedContent(String objectivesJson, String contentJson) {
+        this.objectivesJson = objectivesJson;
+        this.contentJson = contentJson;
+        this.status = LessonStatus.GENERATED;
+        this.enriched = true;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() {
         return id;
     }

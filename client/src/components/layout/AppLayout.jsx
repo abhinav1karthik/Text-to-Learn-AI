@@ -6,10 +6,10 @@ import Sidebar from './Sidebar.jsx';
 import Topbar from './Topbar.jsx';
 
 export default function AppLayout() {
-  const { globalError, isGlobalLoading } = useAppContext();
+  const { globalError, isGlobalLoading, sidebarContent } = useAppContext();
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarContent ? 'has-sidebar-content' : ''}`}>
       <Sidebar />
       <div className="app-main">
         <Topbar />

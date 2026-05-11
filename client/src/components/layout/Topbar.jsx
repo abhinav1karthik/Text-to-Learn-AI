@@ -6,6 +6,10 @@ function getPageTitle(pathname) {
     return 'Course Builder';
   }
 
+  if (pathname === '/courses') {
+    return 'My Courses';
+  }
+
   if (pathname.startsWith('/courses/') && pathname.includes('/lesson/')) {
     return 'Lesson Viewer';
   }
