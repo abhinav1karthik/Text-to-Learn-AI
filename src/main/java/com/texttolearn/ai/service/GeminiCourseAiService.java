@@ -24,6 +24,7 @@ public class GeminiCourseAiService implements CourseAiService {
 
     private static final int COURSE_MAX_OUTPUT_TOKENS = 5000;
     private static final int LESSON_MAX_OUTPUT_TOKENS = 12000;
+    private static final int LESSON_GENERATION_ATTEMPTS = 3;
 
     private final CoursePromptBuilder coursePromptBuilder;
     private final ObjectMapper objectMapper;
@@ -67,13 +68,41 @@ public class GeminiCourseAiService implements CourseAiService {
         }
 
         String prompt = coursePromptBuilder.generateLessonPrompt(courseTitle, moduleTitle, lessonTitle);
-        String generatedJson = callGenerateContentApi(
-                prompt,
-                "lesson content",
-                lessonContentSchema(),
-                LESSON_MAX_OUTPUT_TOKENS
-        );
-        return parseLessonContent(generatedJson);
+        AiGenerationException lastException = null;
+
+        for (int attempt = 1; attempt <= LESSON_GENERATION_ATTEMPTS; attempt++) {
+            try {
+                String generatedJson = callGenerateContentApi(
+                        retryPrompt(prompt, attempt),
+                        "lesson content",
+                        lessonContentSchema(),
+                        LESSON_MAX_OUTPUT_TOKENS
+                );
+                return parseLessonContent(generatedJson);
+            } catch (AiGenerationException exception) {
+                if (!isInvalidLessonJson(exception)) {
+                    throw exception;
+                }
+                lastException = exception;
+            }
+        }
+
+        return fallbackLessonContent(courseTitle, moduleTitle, lessonTitle, lastException);
+    }
+
+    private String retryPrompt(String prompt, int attempt) {
+        if (attempt == 1) {
+            return prompt;
+        }
+
+        return prompt + """
+
+                Previous attempt returned invalid JSON.
+                Regenerate the lesson as one complete, valid JSON object.
+                Keep the lesson concise enough to finish the JSON.
+                Escape all newlines inside code strings as \\n.
+                Do not include Markdown, comments, or text outside the JSON object.
+                """;
     }
 
     private String callGenerateContentApi(
@@ -151,13 +180,17 @@ public class GeminiCourseAiService implements CourseAiService {
                         "language", stringSchema("Programming language for code blocks, such as java."),
                         "title", stringSchema("Title for video blocks."),
                         "query", stringSchema("YouTube search query for video blocks. Do not return a URL."),
+                        "maxResults", integerSchema(),
                         "question", stringSchema("Question text for MCQ blocks."),
                         "options", arraySchema(stringSchema()),
                         "answer", integerSchema(),
                         "explanation", stringSchema("Explanation for the correct MCQ answer.")
                 ),
                 List.of("type"),
-                List.of("type", "text", "language", "title", "query", "question", "options", "answer", "explanation")
+                List.of(
+                        "type", "text", "language", "title", "query", "maxResults",
+                        "question", "options", "answer", "explanation"
+                )
         );
 
         return objectSchema(
@@ -224,18 +257,23 @@ public class GeminiCourseAiService implements CourseAiService {
 
     private GeneratedCourseOutline parseCourseOutline(String generatedJson) {
         try {
-            return objectMapper.readValue(generatedJson, GeneratedCourseOutline.class);
+            return objectMapper.readValue(extractJsonObject(generatedJson), GeneratedCourseOutline.class);
         } catch (JsonProcessingException exception) {
             throw new AiGenerationException("Gemini returned invalid course outline JSON.", exception);
         }
     }
 
-    private GeneratedLessonContent parseLessonContent(String generatedJson) {
+    GeneratedLessonContent parseLessonContent(String generatedJson) {
         try {
-            return objectMapper.readValue(generatedJson, GeneratedLessonContent.class);
+            return objectMapper.readValue(extractJsonObject(generatedJson), GeneratedLessonContent.class);
         } catch (JsonProcessingException exception) {
             throw new AiGenerationException("Gemini returned invalid lesson content JSON.", exception);
         }
+    }
+
+    private boolean isInvalidLessonJson(AiGenerationException exception) {
+        return exception.getMessage() != null
+                && exception.getMessage().contains("invalid lesson content JSON");
     }
 
     private JsonNode parseResponseBody(String responseBody) {
@@ -286,5 +324,67 @@ public class GeminiCourseAiService implements CourseAiService {
         }
 
         return trimmed;
+    }
+
+    String extractJsonObject(String value) {
+        String trimmed = stripMarkdownCodeFence(value);
+        int firstBrace = trimmed.indexOf('{');
+        int lastBrace = trimmed.lastIndexOf('}');
+
+        if (firstBrace == -1 || lastBrace == -1 || lastBrace <= firstBrace) {
+            return trimmed;
+        }
+
+        return trimmed.substring(firstBrace, lastBrace + 1);
+    }
+
+    GeneratedLessonContent fallbackLessonContent(
+            String courseTitle,
+            String moduleTitle,
+            String lessonTitle,
+            Throwable cause
+    ) {
+        return new GeneratedLessonContent(
+                lessonTitle,
+                List.of(
+                        "Understand the main idea of " + lessonTitle,
+                        "Connect this lesson to " + moduleTitle,
+                        "Identify what to review or practice next"
+                ),
+                List.of(
+                        Map.of("type", "heading", "text", lessonTitle),
+                        Map.of(
+                                "type", "paragraph",
+                                "text",
+                                "This lesson belongs to " + courseTitle + ". A full detailed version could not "
+                                        + "be prepared right now, so this page provides a stable starter explanation "
+                                        + "instead of leaving the lesson unavailable."
+                        ),
+                        Map.of(
+                                "type", "paragraph",
+                                "text",
+                                "Review the lesson title, relate it to the current module, and use the course "
+                                        + "outline to continue learning while this lesson is regenerated later."
+                        ),
+                        Map.of(
+                                "type", "video",
+                                "title", lessonTitle + " overview",
+                                "query", courseTitle + " " + moduleTitle + " " + lessonTitle + " tutorial",
+                                "maxResults", 1
+                        ),
+                        Map.of(
+                                "type", "mcq",
+                                "question", "What is the best next step for this lesson?",
+                                "options", List.of(
+                                        "Skip the whole course",
+                                        "Review the topic and continue through the module",
+                                        "Ignore the module context",
+                                        "Delete the course outline"
+                                ),
+                                "answer", 1,
+                                "explanation", "The useful path is to keep the lesson connected to its module and continue learning."
+                        )
+                )
+        );
     }
 }

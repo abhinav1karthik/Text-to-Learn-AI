@@ -1,6 +1,7 @@
 package com.texttolearn.common.error;
 
 import com.texttolearn.ai.error.AiGenerationException;
+import com.texttolearn.video.error.VideoLookupException;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,6 +30,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AiGenerationException.class)
     public ResponseEntity<ApiError> handleAiGeneration(AiGenerationException exception) {
         return build(HttpStatus.BAD_GATEWAY, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(VideoLookupException.class)
+    public ResponseEntity<ApiError> handleVideoLookup(VideoLookupException exception) {
+        return build(HttpStatus.BAD_GATEWAY, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiError> handleIllegalArgument(IllegalArgumentException exception) {
+        return build(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
     private ResponseEntity<ApiError> build(HttpStatus status, String message, Map<String, String> fieldErrors) {

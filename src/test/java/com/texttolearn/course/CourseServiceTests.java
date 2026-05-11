@@ -105,6 +105,22 @@ class CourseServiceTests {
         );
     }
 
+    @Test
+    @Transactional
+    void keepsMcqsAtEndAndDistributesVideoBlocksThroughLessonContent() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|video-flow-user", "video-flow@example.com", "Video Flow Student", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Segment Trees and Its Applications");
+
+        LessonResponse response = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 1);
+
+        assertThat(response.content()).extracting(block -> block.get("type"))
+                .containsExactly("heading", "paragraph", "video", "paragraph", "video", "mcq", "mcq");
+        assertThat(response.content().get(2)).containsEntry("maxResults", 1);
+        assertThat(response.content().get(4)).containsEntry("maxResults", 1);
+    }
+
     @TestConfiguration
     static class FakeAiConfig {
 
@@ -134,6 +150,42 @@ class CourseServiceTests {
                         String lessonTitle
                 ) {
                     int callNumber = lessonGenerationCount.incrementAndGet();
+                    if ("Building the Tree".equals(lessonTitle)) {
+                        return new GeneratedLessonContent(
+                                lessonTitle,
+                                List.of("Understand video placement"),
+                                List.of(
+                                        Map.of("type", "heading", "text", lessonTitle),
+                                        Map.of("type", "paragraph", "text", "First explanation."),
+                                        Map.of("type", "paragraph", "text", "Second explanation."),
+                                        Map.of(
+                                                "type", "video",
+                                                "title", "First related video",
+                                                "query", "segment tree build visual explanation"
+                                        ),
+                                        Map.of(
+                                                "type", "video",
+                                                "title", "Second related video",
+                                                "query", "segment tree implementation walkthrough"
+                                        ),
+                                        Map.of(
+                                                "type", "mcq",
+                                                "question", "Question one?",
+                                                "options", List.of("A", "B", "C", "D"),
+                                                "answer", 1,
+                                                "explanation", "B is correct."
+                                        ),
+                                        Map.of(
+                                                "type", "mcq",
+                                                "question", "Question two?",
+                                                "options", List.of("A", "B", "C", "D"),
+                                                "answer", 2,
+                                                "explanation", "C is correct."
+                                        )
+                                )
+                        );
+                    }
+
                     return new GeneratedLessonContent(
                             lessonTitle,
                             List.of("Understand call " + callNumber),

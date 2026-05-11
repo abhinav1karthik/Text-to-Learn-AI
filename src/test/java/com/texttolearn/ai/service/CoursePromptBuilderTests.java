@@ -44,8 +44,12 @@ class CoursePromptBuilderTests {
         assertThat(prompt).contains("\"type\": \"code\"");
         assertThat(prompt).contains("\"type\": \"video\"");
         assertThat(prompt).contains("\"query\"");
+        assertThat(prompt).contains("\"maxResults\": 1");
+        assertThat(prompt).contains("Do not place all video blocks at the end");
+        assertThat(prompt).contains("Do not place video blocks consecutively");
+        assertThat(prompt).contains("Place code blocks immediately after the explanation they support");
         assertThat(prompt).contains("Do not include direct video links or URLs");
-        assertThat(prompt).contains("Add 4 or 5 MCQ blocks");
+        assertThat(prompt).contains("Add 4 or 5 MCQ blocks at the very end");
         assertThat(prompt).contains("\"explanation\"");
         assertThat(prompt).contains("zero-based index");
     }

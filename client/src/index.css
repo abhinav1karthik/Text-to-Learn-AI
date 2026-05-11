@@ -762,6 +762,35 @@ code {
   border: 0;
 }
 
+.video-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.video-result {
+  overflow: hidden;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.video-result-meta {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.video-result-meta strong {
+  color: #172026;
+  line-height: 1.35;
+}
+
+.video-result-meta span {
+  color: #64748b;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
 .video-search-link {
   display: inline-flex;
   max-width: 100%;

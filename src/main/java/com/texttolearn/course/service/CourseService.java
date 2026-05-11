@@ -345,7 +345,129 @@ public class CourseService {
             normalizedContent.add(normalizedBlock);
         }
 
-        return normalizedContent;
+        return normalizeLessonFlow(normalizedContent);
+    }
+
+    private List<Map<String, Object>> normalizeLessonFlow(List<Map<String, Object>> content) {
+        if (content.isEmpty()) {
+            return content;
+        }
+
+        List<Map<String, Object>> teachingAndVideoBlocks = new ArrayList<>();
+        List<Map<String, Object>> mcqBlocks = new ArrayList<>();
+
+        for (Map<String, Object> block : content) {
+            if ("mcq".equals(block.get("type"))) {
+                mcqBlocks.add(block);
+            } else {
+                teachingAndVideoBlocks.add(block);
+            }
+        }
+
+        if (!shouldRedistributeVideos(teachingAndVideoBlocks)) {
+            List<Map<String, Object>> orderedBlocks = new ArrayList<>(teachingAndVideoBlocks);
+            orderedBlocks.addAll(mcqBlocks);
+            return orderedBlocks;
+        }
+
+        List<Map<String, Object>> teachingBlocks = new ArrayList<>();
+        List<Map<String, Object>> videoBlocks = new ArrayList<>();
+        for (Map<String, Object> block : teachingAndVideoBlocks) {
+            if ("video".equals(block.get("type"))) {
+                videoBlocks.add(block);
+            } else {
+                teachingBlocks.add(block);
+            }
+        }
+
+        if (teachingBlocks.isEmpty() || videoBlocks.isEmpty()) {
+            List<Map<String, Object>> orderedBlocks = new ArrayList<>(teachingAndVideoBlocks);
+            orderedBlocks.addAll(mcqBlocks);
+            return orderedBlocks;
+        }
+
+        if (videoBlocks.size() > 1) {
+            videoBlocks.forEach(this::defaultFocusedVideoResult);
+        }
+
+        List<Map<String, Object>> orderedBlocks = interleaveVideos(teachingBlocks, videoBlocks);
+        orderedBlocks.addAll(mcqBlocks);
+        return orderedBlocks;
+    }
+
+    private boolean shouldRedistributeVideos(List<Map<String, Object>> blocks) {
+        int firstVideoIndex = -1;
+        int lastTeachingIndex = -1;
+        boolean previousBlockWasVideo = false;
+        boolean hasAdjacentVideos = false;
+
+        for (int index = 0; index < blocks.size(); index++) {
+            Map<String, Object> block = blocks.get(index);
+            boolean video = "video".equals(block.get("type"));
+            if (video) {
+                if (firstVideoIndex == -1) {
+                    firstVideoIndex = index;
+                }
+                if (previousBlockWasVideo) {
+                    hasAdjacentVideos = true;
+                }
+            } else {
+                lastTeachingIndex = index;
+            }
+            previousBlockWasVideo = video;
+        }
+
+        return firstVideoIndex != -1
+                && (hasAdjacentVideos || lastTeachingIndex < firstVideoIndex);
+    }
+
+    private List<Map<String, Object>> interleaveVideos(
+            List<Map<String, Object>> teachingBlocks,
+            List<Map<String, Object>> videoBlocks
+    ) {
+        List<Map<String, Object>> orderedBlocks = new ArrayList<>();
+        List<Integer> videoTargets = videoInsertionTargets(teachingBlocks.size(), videoBlocks.size());
+        int nextVideoIndex = 0;
+
+        for (int teachingIndex = 0; teachingIndex < teachingBlocks.size(); teachingIndex++) {
+            orderedBlocks.add(teachingBlocks.get(teachingIndex));
+
+            while (nextVideoIndex < videoBlocks.size()
+                    && videoTargets.get(nextVideoIndex) == teachingIndex) {
+                orderedBlocks.add(videoBlocks.get(nextVideoIndex));
+                nextVideoIndex++;
+            }
+        }
+
+        while (nextVideoIndex < videoBlocks.size()) {
+            orderedBlocks.add(videoBlocks.get(nextVideoIndex));
+            nextVideoIndex++;
+        }
+
+        return orderedBlocks;
+    }
+
+    private List<Integer> videoInsertionTargets(int teachingBlockCount, int videoBlockCount) {
+        List<Integer> targets = new ArrayList<>();
+        int previousTarget = -1;
+
+        for (int videoIndex = 0; videoIndex < videoBlockCount; videoIndex++) {
+            int target = ((videoIndex + 1) * teachingBlockCount) / (videoBlockCount + 1);
+            target = Math.max(0, Math.min(teachingBlockCount - 1, target));
+            if (target <= previousTarget) {
+                target = Math.min(teachingBlockCount - 1, previousTarget + 1);
+            }
+            targets.add(target);
+            previousTarget = target;
+        }
+
+        return targets;
+    }
+
+    private void defaultFocusedVideoResult(Map<String, Object> videoBlock) {
+        if (!videoBlock.containsKey("maxResults")) {
+            videoBlock.put("maxResults", 1);
+        }
     }
 
     private Object firstPresent(Object... values) {

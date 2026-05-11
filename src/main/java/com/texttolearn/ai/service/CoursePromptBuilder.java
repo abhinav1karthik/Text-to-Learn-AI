@@ -106,7 +106,8 @@ public class CoursePromptBuilder {
                     {
                       "type": "video",
                       "title": "Suggested video topic",
-                      "query": "YouTube search query, not a direct URL"
+                      "query": "YouTube search query, not a direct URL",
+                      "maxResults": 1
                     },
                     {
                       "type": "mcq",
@@ -121,18 +122,27 @@ public class CoursePromptBuilder {
                 Lesson content rules:
                 - Include 3 to 5 learning objectives.
                 - Use only these content block types: heading, paragraph, code, video, mcq.
-                - Start with a heading and beginner-friendly explanation.
+                - Structure the lesson as an engaging learning sequence, not as separate piles of text, videos, and questions.
+                - Start with a heading and a beginner-friendly explanation.
                 - Use multiple headings and paragraphs to teach the topic step by step.
+                - Place code blocks immediately after the explanation they support, especially for software engineering, programming, algorithms, data structures, APIs, databases, or system design lessons.
                 - Include a code block only when code is relevant to this lesson.
                 - If you include a code block, the block must have type "code", a language, and a non-empty "text" field containing the complete source code.
                 - Never put source code in fields named "code", "source", "sourceCode", or "content"; source code must be in the "text" field.
                 - If a code block is included, prefer Java unless another language is clearly more appropriate.
-                - Include exactly one video block with a search query in the "query" field.
+                - Include 2 video blocks for most lessons, or 3 video blocks when the lesson is visual, practical, or complex.
+                - Use only 1 video block for very short or purely conceptual lessons.
+                - Place each video block directly after the concept, example, diagram idea, or code walkthrough that it reinforces.
+                - Do not place all video blocks at the end of the lesson.
+                - Do not place video blocks consecutively.
+                - Each video block must include a specific YouTube search query in the "query" field and "maxResults": 1.
+                - Video queries should be specific to that exact section, not generic to the whole course.
                 - Do not include direct video links or URLs.
-                - Add 4 or 5 MCQ blocks at the end of the content array.
+                - Add 4 or 5 MCQ blocks at the very end of the content array after all teaching, examples, code, and videos.
                 - Every MCQ must have 4 options.
                 - The MCQ "answer" must be a zero-based index into the options array.
                 - Every MCQ must include an explanation for the correct answer.
+                - A good block order looks like: heading, paragraph, paragraph, video, heading, paragraph, code, paragraph, video, heading, paragraph, mcq, mcq, mcq, mcq.
                 - Return only one valid JSON object.
                 """.formatted(normalizedCourseTitle, normalizedModuleTitle, normalizedLessonTitle);
     }
