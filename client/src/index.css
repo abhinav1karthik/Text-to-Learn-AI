@@ -23,7 +23,8 @@ a {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -628,7 +629,8 @@ code {
 
 .lesson-block,
 .lesson-empty,
-.lesson-objectives {
+.lesson-objectives,
+.lesson-audio-panel {
   border: 1px solid #dbe3ea;
   border-radius: 8px;
   background: #ffffff;
@@ -649,6 +651,63 @@ code {
 .lesson-objectives li {
   color: #52616d;
   line-height: 1.6;
+}
+
+.lesson-audio-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.lesson-audio-panel h2 {
+  margin-bottom: 8px;
+}
+
+.lesson-audio-panel p {
+  margin: 0;
+  color: #52616d;
+  line-height: 1.65;
+}
+
+.audio-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 320px));
+  gap: 14px;
+}
+
+.audio-option-field {
+  display: grid;
+  gap: 8px;
+  color: #172026;
+  font-weight: 700;
+}
+
+.audio-option-field select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 11px 12px;
+  color: #172026;
+}
+
+@media (max-width: 760px) {
+  .audio-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lesson-audio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lesson-audio-player {
+  width: 100%;
+}
+
+.lesson-audio-panel .error-message {
+  margin-bottom: 0;
 }
 
 .lesson-pager {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import LessonAudioPlayer from '../components/lesson/LessonAudioPlayer.jsx';
 import LessonRenderer from '../components/lesson/LessonRenderer.jsx';
 import ErrorMessage from '../components/ui/ErrorMessage.jsx';
 import LoadingSpinner from '../components/ui/LoadingSpinner.jsx';
@@ -110,6 +111,13 @@ export default function LessonDetailPage() {
             </ul>
           </section>
         )}
+
+        <LessonAudioPlayer
+          courseId={courseId}
+          lessonIndex={lessonIndex}
+          lessonTitle={lesson.title}
+          moduleIndex={moduleIndex}
+        />
 
         <LessonRenderer content={lesson.content} />
 
