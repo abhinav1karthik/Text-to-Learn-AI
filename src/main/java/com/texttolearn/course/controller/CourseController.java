@@ -6,6 +6,8 @@ import com.texttolearn.course.dto.CourseResponse;
 import com.texttolearn.course.dto.CreateCourseRequest;
 import com.texttolearn.course.dto.LessonResponse;
 import com.texttolearn.course.service.CourseService;
+import com.texttolearn.pdf.dto.LessonPdfResponse;
+import com.texttolearn.pdf.service.LessonPdfService;
 import com.texttolearn.security.Auth0UserInfoService;
 import com.texttolearn.security.AuthenticatedUserProfile;
 import com.texttolearn.user.model.AppUser;
@@ -35,17 +37,20 @@ public class CourseController {
     private final Auth0UserInfoService auth0UserInfoService;
     private final CourseService courseService;
     private final LessonAudioService lessonAudioService;
+    private final LessonPdfService lessonPdfService;
 
     public CourseController(
             AppUserService appUserService,
             Auth0UserInfoService auth0UserInfoService,
             CourseService courseService,
-            LessonAudioService lessonAudioService
+            LessonAudioService lessonAudioService,
+            LessonPdfService lessonPdfService
     ) {
         this.appUserService = appUserService;
         this.auth0UserInfoService = auth0UserInfoService;
         this.courseService = courseService;
         this.lessonAudioService = lessonAudioService;
+        this.lessonPdfService = lessonPdfService;
     }
 
     @PostMapping
@@ -100,6 +105,23 @@ public class CourseController {
                 .contentLength(audio.audio().length)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + audio.fileName() + "\"")
                 .body(audio.audio());
+    }
+
+    @GetMapping(value = "/{courseId}/module/{moduleIndex}/lesson/{lessonIndex}/pdf")
+    ResponseEntity<byte[]> getLessonPdf(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID courseId,
+            @PathVariable int moduleIndex,
+            @PathVariable int lessonIndex
+    ) {
+        AppUser user = currentUser(jwt);
+        LessonResponse lesson = courseService.getOrGenerateLessonForUser(user, courseId, moduleIndex, lessonIndex);
+        LessonPdfResponse pdf = lessonPdfService.generateLessonPdf(lesson);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(pdf.contentType()))
+                .contentLength(pdf.pdf().length)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + pdf.fileName() + "\"")
+                .body(pdf.pdf());
     }
 
     private AppUser currentUser(Jwt jwt) {

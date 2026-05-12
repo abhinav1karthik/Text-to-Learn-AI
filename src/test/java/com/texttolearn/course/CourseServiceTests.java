@@ -2,6 +2,7 @@ package com.texttolearn.course;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.texttolearn.ai.dto.GeneratedCourseOutline;
 import com.texttolearn.ai.dto.GeneratedLessonContent;
 import com.texttolearn.ai.dto.GeneratedModuleOutline;
@@ -16,6 +17,10 @@ import com.texttolearn.course.repository.CourseRepository;
 import com.texttolearn.course.service.CourseService;
 import com.texttolearn.user.model.AppUser;
 import com.texttolearn.user.repository.AppUserRepository;
+import com.texttolearn.video.config.YouTubeProperties;
+import com.texttolearn.video.dto.YouTubeVideoResponse;
+import com.texttolearn.video.dto.YouTubeVideoSearchResponse;
+import com.texttolearn.video.service.YouTubeVideoService;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -119,6 +124,9 @@ class CourseServiceTests {
                 .containsExactly("heading", "paragraph", "video", "paragraph", "video", "mcq", "mcq");
         assertThat(response.content().get(2)).containsEntry("maxResults", 1);
         assertThat(response.content().get(4)).containsEntry("maxResults", 1);
+        assertThat(response.content().get(2).get("videos")).asList().hasSize(1);
+        assertThat(response.content().get(2).get("videos").toString())
+                .contains("https://www.youtube.com/watch?v=video-1");
     }
 
     @TestConfiguration
@@ -196,6 +204,34 @@ class CourseServiceTests {
                                             "text", courseTitle + " / " + moduleTitle
                                     )
                             )
+                    );
+                }
+            };
+        }
+
+        @Bean
+        @Primary
+        YouTubeVideoService fakeYouTubeVideoService(ObjectMapper objectMapper) {
+            return new YouTubeVideoService(
+                    objectMapper,
+                    new YouTubeProperties("test-key", "https://youtube.googleapis.com/youtube/v3", 1, 60)
+            ) {
+                private final AtomicInteger videoCount = new AtomicInteger();
+
+                @Override
+                public YouTubeVideoSearchResponse searchEducationalVideos(String query, Integer maxResults) {
+                    int videoNumber = videoCount.incrementAndGet();
+                    String videoId = "video-" + videoNumber;
+                    return new YouTubeVideoSearchResponse(
+                            query,
+                            List.of(new YouTubeVideoResponse(
+                                    videoId,
+                                    "https://www.youtube.com/embed/" + videoId,
+                                    "https://www.youtube.com/watch?v=" + videoId,
+                                    "Saved video for " + query,
+                                    "Text To Learn Test Channel",
+                                    "https://img.youtube.com/" + videoId + ".jpg"
+                            ))
                     );
                 }
             };

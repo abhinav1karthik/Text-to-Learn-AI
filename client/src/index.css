@@ -630,11 +630,40 @@ code {
 .lesson-block,
 .lesson-empty,
 .lesson-objectives,
-.lesson-audio-panel {
+.lesson-audio-panel,
+.lesson-download-panel {
   border: 1px solid #dbe3ea;
   border-radius: 8px;
   background: #ffffff;
   padding: 22px;
+}
+
+.lesson-download-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.lesson-download-panel h2 {
+  margin-bottom: 8px;
+}
+
+.lesson-download-panel p {
+  margin: 0;
+  color: #52616d;
+  line-height: 1.6;
+}
+
+.lesson-download-panel .error-message {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
+@media (max-width: 760px) {
+  .lesson-download-panel {
+    grid-template-columns: 1fr;
+  }
 }
 
 .lesson-objectives h2 {

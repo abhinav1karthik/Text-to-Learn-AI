@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApiClient } from '../../../hooks/useApiClient.js';
 
 function getYouTubeEmbedUrl(block) {
@@ -10,12 +10,13 @@ function getYouTubeEmbedUrl(block) {
     return `https://www.youtube.com/embed/${block.videoId}`;
   }
 
-  if (!block.url) {
+  const sourceUrl = block.url || block.watchUrl;
+  if (!sourceUrl) {
     return null;
   }
 
   try {
-    const parsedUrl = new URL(block.url);
+    const parsedUrl = new URL(sourceUrl);
 
     if (parsedUrl.hostname.includes('youtu.be')) {
       return `https://www.youtube.com/embed/${parsedUrl.pathname.slice(1)}`;
@@ -23,13 +24,26 @@ function getYouTubeEmbedUrl(block) {
 
     if (parsedUrl.hostname.includes('youtube.com')) {
       const videoId = parsedUrl.searchParams.get('v');
-      return videoId ? `https://www.youtube.com/embed/${videoId}` : block.url;
+      return videoId ? `https://www.youtube.com/embed/${videoId}` : sourceUrl;
     }
 
-    return block.url;
+    return sourceUrl;
   } catch {
     return null;
   }
+}
+
+function getSavedVideos(block) {
+  if (!Array.isArray(block.videos)) {
+    return [];
+  }
+
+  return block.videos
+    .map((video) => ({
+      ...video,
+      embedUrl: getYouTubeEmbedUrl(video),
+    }))
+    .filter((video) => video.embedUrl);
 }
 
 function getVideoQuery(block) {
@@ -50,6 +64,7 @@ export default function VideoBlock({ block, query: queryProp }) {
   const [videos, setVideos] = useState([]);
   const [error, setError] = useState('');
   const [isLoading, setLoading] = useState(false);
+  const savedVideos = useMemo(() => getSavedVideos(block), [block]);
   const directEmbedUrl = getYouTubeEmbedUrl(block);
   const query = queryProp || getVideoQuery(block);
   const maxResults = getMaxResults(block);
@@ -65,10 +80,11 @@ export default function VideoBlock({ block, query: queryProp }) {
         },
       ]
     : [];
-  const visibleVideos = directVideo.length > 0 ? directVideo : videos;
+  const visibleVideos =
+    directVideo.length > 0 ? directVideo : savedVideos.length > 0 ? savedVideos : videos;
 
   useEffect(() => {
-    if (directEmbedUrl || !query) {
+    if (directEmbedUrl || savedVideos.length > 0 || !query) {
       setVideos([]);
       setError('');
       setLoading(false);
@@ -105,7 +121,7 @@ export default function VideoBlock({ block, query: queryProp }) {
     return () => {
       cancelled = true;
     };
-  }, [apiClient, directEmbedUrl, maxResults, query]);
+  }, [apiClient, directEmbedUrl, maxResults, query, savedVideos.length]);
 
   return (
     <section className="lesson-block video-block">

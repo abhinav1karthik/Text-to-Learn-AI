@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import LessonAudioPlayer from '../components/lesson/LessonAudioPlayer.jsx';
+import LessonPdfDownloadButton from '../components/lesson/LessonPdfDownloadButton.jsx';
 import LessonRenderer from '../components/lesson/LessonRenderer.jsx';
 import ErrorMessage from '../components/ui/ErrorMessage.jsx';
 import LoadingSpinner from '../components/ui/LoadingSpinner.jsx';
@@ -120,6 +121,13 @@ export default function LessonDetailPage() {
         />
 
         <LessonRenderer content={lesson.content} />
+
+        <LessonPdfDownloadButton
+          courseId={courseId}
+          lessonIndex={lessonIndex}
+          lessonTitle={lesson.title}
+          moduleIndex={moduleIndex}
+        />
 
         <nav className="lesson-pager" aria-label="Lesson navigation">
           {previousLesson ? (

@@ -19,6 +19,9 @@ import com.texttolearn.course.model.Lesson;
 import com.texttolearn.course.model.LessonStatus;
 import com.texttolearn.course.repository.CourseRepository;
 import com.texttolearn.user.model.AppUser;
+import com.texttolearn.video.dto.YouTubeVideoResponse;
+import com.texttolearn.video.dto.YouTubeVideoSearchResponse;
+import com.texttolearn.video.service.YouTubeVideoService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,11 +41,18 @@ public class CourseService {
     private final CourseAiService courseAiService;
     private final ObjectMapper objectMapper;
     private final CourseRepository courseRepository;
+    private final YouTubeVideoService youTubeVideoService;
 
-    public CourseService(CourseAiService courseAiService, ObjectMapper objectMapper, CourseRepository courseRepository) {
+    public CourseService(
+            CourseAiService courseAiService,
+            ObjectMapper objectMapper,
+            CourseRepository courseRepository,
+            YouTubeVideoService youTubeVideoService
+    ) {
         this.courseAiService = courseAiService;
         this.objectMapper = objectMapper;
         this.courseRepository = courseRepository;
+        this.youTubeVideoService = youTubeVideoService;
     }
 
     @Transactional(readOnly = true)
@@ -114,11 +124,21 @@ public class CourseService {
                     module.getTitle(),
                     lesson.getTitle()
             );
-            validateLessonContent(generatedLesson);
+            List<Map<String, Object>> normalizedContent = validateLessonContent(generatedLesson);
+            List<Map<String, Object>> enrichedContent = enrichVideoBlocks(normalizedContent);
             lesson.replaceGeneratedContent(
                     writeObjectivesJson(generatedLesson.objectives()),
-                    writeContentJson(generatedLesson.content())
+                    writeContentJson(enrichedContent)
             );
+        } else if (needsVideoEnrichment(lesson)) {
+            List<Map<String, Object>> existingContent = readContent(lesson.getContentJson());
+            List<Map<String, Object>> enrichedContent = enrichVideoBlocks(existingContent);
+            if (savedVideoCount(enrichedContent) > savedVideoCount(existingContent)) {
+                lesson.replaceGeneratedContent(
+                        lesson.getObjectivesJson(),
+                        writeContentJson(enrichedContent)
+                );
+            }
         }
 
         return toLessonResponse(course, module, lesson);
@@ -193,6 +213,13 @@ public class CourseService {
                 || "[]".equals(lesson.getContentJson().trim());
     }
 
+    private boolean needsVideoEnrichment(Lesson lesson) {
+        return readContent(lesson.getContentJson()).stream()
+                .anyMatch(block -> "video".equals(block.get("type"))
+                        && !hasSavedVideos(block)
+                        && firstPresent(block.get("query"), block.get("searchQuery"), block.get("text")) != null);
+    }
+
     private void validateOutline(GeneratedCourseOutline outline) {
         if (outline == null) {
             throw new AiGenerationException("AI did not return a course outline.");
@@ -222,7 +249,7 @@ public class CourseService {
         }
     }
 
-    private void validateLessonContent(GeneratedLessonContent lessonContent) {
+    private List<Map<String, Object>> validateLessonContent(GeneratedLessonContent lessonContent) {
         if (lessonContent == null) {
             throw new AiGenerationException("AI did not return lesson content.");
         }
@@ -247,6 +274,8 @@ public class CourseService {
                 throw new AiGenerationException("AI lesson content contains a block without a type.");
             }
         }
+
+        return normalizedContent;
     }
 
     private String writeTagsJson(List<String> tags) {
@@ -346,6 +375,91 @@ public class CourseService {
         }
 
         return normalizeLessonFlow(normalizedContent);
+    }
+
+    private List<Map<String, Object>> enrichVideoBlocks(List<Map<String, Object>> content) {
+        List<Map<String, Object>> enrichedContent = new ArrayList<>();
+        for (Map<String, Object> block : content) {
+            if (!"video".equals(block.get("type")) || hasSavedVideos(block)) {
+                enrichedContent.add(block);
+                continue;
+            }
+
+            String query = asString(firstPresent(block.get("query"), block.get("searchQuery"), block.get("text")));
+            if (isBlank(query)) {
+                enrichedContent.add(block);
+                continue;
+            }
+
+            Map<String, Object> enrichedBlock = new LinkedHashMap<>(block);
+            int maxResults = videoMaxResults(enrichedBlock.get("maxResults"));
+            enrichedBlock.put("maxResults", maxResults);
+
+            try {
+                YouTubeVideoSearchResponse response = youTubeVideoService.searchEducationalVideos(query, maxResults);
+                List<YouTubeVideoResponse> responseVideos = response == null || response.videos() == null
+                        ? List.of()
+                        : response.videos();
+                List<Map<String, Object>> videos = responseVideos.stream()
+                        .map(this::toVideoMap)
+                        .toList();
+                if (!videos.isEmpty()) {
+                    enrichedBlock.put("videos", videos);
+                }
+            } catch (RuntimeException exception) {
+                // Keep the lesson usable even when YouTube quota/configuration is unavailable.
+            }
+
+            enrichedContent.add(enrichedBlock);
+        }
+
+        return enrichedContent;
+    }
+
+    private boolean hasSavedVideos(Map<String, Object> block) {
+        return block.get("videos") instanceof List<?> videos && !videos.isEmpty();
+    }
+
+    private int savedVideoCount(List<Map<String, Object>> content) {
+        int count = 0;
+        for (Map<String, Object> block : content) {
+            if (block.get("videos") instanceof List<?> videos) {
+                count += videos.size();
+            }
+        }
+
+        return count;
+    }
+
+    private int videoMaxResults(Object value) {
+        if (value instanceof Number number) {
+            return boundedVideoMaxResults(number.intValue());
+        }
+
+        try {
+            return boundedVideoMaxResults(Integer.parseInt(String.valueOf(value)));
+        } catch (RuntimeException exception) {
+            return 1;
+        }
+    }
+
+    private int boundedVideoMaxResults(int value) {
+        if (value <= 0) {
+            return 1;
+        }
+
+        return Math.min(value, 3);
+    }
+
+    private Map<String, Object> toVideoMap(YouTubeVideoResponse video) {
+        Map<String, Object> videoMap = new LinkedHashMap<>();
+        videoMap.put("videoId", video.videoId());
+        videoMap.put("title", video.title());
+        videoMap.put("channelTitle", video.channelTitle());
+        videoMap.put("embedUrl", video.embedUrl());
+        videoMap.put("watchUrl", video.watchUrl());
+        videoMap.put("thumbnailUrl", video.thumbnailUrl());
+        return videoMap;
     }
 
     private List<Map<String, Object>> normalizeLessonFlow(List<Map<String, Object>> content) {
