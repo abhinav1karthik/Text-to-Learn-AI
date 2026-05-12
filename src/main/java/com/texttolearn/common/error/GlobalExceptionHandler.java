@@ -1,6 +1,7 @@
 package com.texttolearn.common.error;
 
 import com.texttolearn.ai.error.AiGenerationException;
+import com.texttolearn.audio.error.AudioGenerationException;
 import com.texttolearn.video.error.VideoLookupException;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
@@ -34,6 +35,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(VideoLookupException.class)
     public ResponseEntity<ApiError> handleVideoLookup(VideoLookupException exception) {
+        return build(HttpStatus.BAD_GATEWAY, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(AudioGenerationException.class)
+    public ResponseEntity<ApiError> handleAudioGeneration(AudioGenerationException exception) {
         return build(HttpStatus.BAD_GATEWAY, exception.getMessage(), Map.of());
     }
 

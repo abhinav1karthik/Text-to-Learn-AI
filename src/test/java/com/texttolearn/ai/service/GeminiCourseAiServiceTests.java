@@ -11,7 +11,14 @@ class GeminiCourseAiServiceTests {
     private final GeminiCourseAiService service = new GeminiCourseAiService(
             new CoursePromptBuilder(),
             new ObjectMapper(),
-            new GeminiProperties("test-key", "https://generativelanguage.googleapis.com/v1beta", "gemini-test")
+            new GeminiProperties(
+                    "test-key",
+                    "https://generativelanguage.googleapis.com/v1beta",
+                    "gemini-test",
+                    "gemini-tts-test",
+                    "Kore",
+                    6_000
+            )
     );
 
     @Test

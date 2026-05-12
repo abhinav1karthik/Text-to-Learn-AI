@@ -1,5 +1,7 @@
 package com.texttolearn.course.controller;
 
+import com.texttolearn.audio.dto.LessonAudioResponse;
+import com.texttolearn.audio.service.LessonAudioService;
 import com.texttolearn.course.dto.CourseResponse;
 import com.texttolearn.course.dto.CreateCourseRequest;
 import com.texttolearn.course.dto.LessonResponse;
@@ -12,12 +14,15 @@ import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,15 +34,18 @@ public class CourseController {
     private final AppUserService appUserService;
     private final Auth0UserInfoService auth0UserInfoService;
     private final CourseService courseService;
+    private final LessonAudioService lessonAudioService;
 
     public CourseController(
             AppUserService appUserService,
             Auth0UserInfoService auth0UserInfoService,
-            CourseService courseService
+            CourseService courseService,
+            LessonAudioService lessonAudioService
     ) {
         this.appUserService = appUserService;
         this.auth0UserInfoService = auth0UserInfoService;
         this.courseService = courseService;
+        this.lessonAudioService = lessonAudioService;
     }
 
     @PostMapping
@@ -73,6 +81,25 @@ public class CourseController {
     ) {
         AppUser user = currentUser(jwt);
         return courseService.getOrGenerateLessonForUser(user, courseId, moduleIndex, lessonIndex);
+    }
+
+    @GetMapping(value = "/{courseId}/module/{moduleIndex}/lesson/{lessonIndex}/audio")
+    ResponseEntity<byte[]> getLessonAudio(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID courseId,
+            @PathVariable int moduleIndex,
+            @PathVariable int lessonIndex,
+            @RequestParam(required = false) String language,
+            @RequestParam(required = false) String voiceName
+    ) {
+        AppUser user = currentUser(jwt);
+        LessonResponse lesson = courseService.getOrGenerateLessonForUser(user, courseId, moduleIndex, lessonIndex);
+        LessonAudioResponse audio = lessonAudioService.generateAudio(lesson, voiceName, language);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(audio.contentType()))
+                .contentLength(audio.audio().length)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + audio.fileName() + "\"")
+                .body(audio.audio());
     }
 
     private AppUser currentUser(Jwt jwt) {
