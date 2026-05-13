@@ -7,6 +7,7 @@ client/.env.local
 client/.env.*.local
 .env
 .env.local
+.env.docker
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/

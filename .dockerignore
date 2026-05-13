@@ -1,0 +1,17 @@
+.git
+.github
+.codex
+.kiro
+.idea
+.vscode
+target
+build
+dist
+node_modules
+client
+client/node_modules
+client/dist
+.env
+.env.local
+*.log
+HELP.md

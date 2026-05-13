@@ -48,7 +48,7 @@ public class SecurityConfig {
             };
         }
 
-        NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withIssuerLocation(auth0Properties.issuerUri()).build();
+        NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(auth0Properties.resolvedJwkSetUri()).build();
         OAuth2TokenValidator<Jwt> issuerValidator = JwtValidators.createDefaultWithIssuer(auth0Properties.issuerUri());
         OAuth2TokenValidator<Jwt> audienceValidator = new AudienceValidator(auth0Properties.audience());
         jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(issuerValidator, audienceValidator));

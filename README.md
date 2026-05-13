@@ -38,6 +38,7 @@ The project is built as a production-shaped Java + React application with OAuth2
 - Cloudflare R2 audio storage with metadata stored in PostgreSQL.
 - Responsive React + Vite frontend using Tailwind CSS and dark mode.
 - GitHub Actions CI for backend tests and frontend production builds.
+- Dockerized backend, frontend, and local PostgreSQL setup through Docker Compose.
 - User-specific course storage through protected APIs.
 
 ## Current Architecture
@@ -476,6 +477,7 @@ Content-Type: application/json
 | `SPRING_DATASOURCE_PASSWORD`        | Yes                  | Database password                                  |
 | `AUTH0_ISSUER_URI`                  | Yes for auth         | Auth0 issuer URL                                   |
 | `AUTH0_AUDIENCE`                    | Yes for auth         | API audience expected in access tokens             |
+| `AUTH0_JWK_SET_URI`                 | Optional             | Auth0 JWKS URL; derived from issuer if omitted     |
 | `APP_CORS_ALLOWED_ORIGINS`          | Recommended          | Allowed frontend origins                           |
 | `AI_PROVIDER`                       | Optional             | `gemini` by default, `openai` also supported       |
 | `GEMINI_API_KEY`                    | Yes for Gemini       | Gemini API key                                     |
@@ -511,18 +513,80 @@ VITE_AUTH0_AUDIENCE=https://text-to-learn-api
 
 - Java 21 or newer
 - Node.js 20 or newer
-- PostgreSQL 17 locally, Neon, or the provided local Postgres Docker Compose service
+- PostgreSQL 17 locally, Neon, or the Docker Compose Postgres service
+- Docker Desktop if running the containerized stack
 - Auth0 SPA application and API audience
 - Gemini API key
 - YouTube API key for video enrichment
 - Cloudflare R2 credentials if persistent audio storage is needed
 
-### 1. Start PostgreSQL Locally
+### Option A: Run With Docker Compose
 
-The repository currently includes Docker Compose for the database only:
+Create a Docker env file:
 
 ```bash
-docker compose up -d
+cp .env.docker.example .env.docker
+```
+
+Edit `.env.docker` and fill in at least:
+
+```bash
+VITE_AUTH0_DOMAIN=your-auth0-domain.us.auth0.com
+VITE_AUTH0_CLIENT_ID=your-auth0-spa-client-id
+VITE_AUTH0_AUDIENCE=https://text-to-learn-api
+
+AUTH0_ISSUER_URI=https://your-auth0-domain.us.auth0.com/
+AUTH0_AUDIENCE=https://text-to-learn-api
+AUTH0_JWK_SET_URI=https://your-auth0-domain.us.auth0.com/.well-known/jwks.json
+
+GEMINI_API_KEY=your-gemini-api-key
+YOUTUBE_API_KEY=your-youtube-api-key
+```
+
+For Auth0 local Docker testing, add this URL in the Auth0 SPA application settings:
+
+```text
+Allowed Callback URLs: http://localhost:3000
+Allowed Logout URLs:   http://localhost:3000
+Allowed Web Origins:   http://localhost:3000
+```
+
+Start the full stack:
+
+```bash
+docker compose --env-file .env.docker up --build
+```
+
+The Docker stack exposes:
+
+```text
+Frontend:   http://localhost:3000
+Backend:    http://localhost:8081
+PostgreSQL: localhost:5433
+```
+
+The Docker frontend is served by Nginx. Browser requests to `/api` are proxied inside Docker to the backend container, so `VITE_API_BASE_URL` should stay empty in `.env.docker`.
+
+To stop the stack:
+
+```bash
+docker compose down
+```
+
+To also delete the local Docker database volume:
+
+```bash
+docker compose down -v
+```
+
+### Option B: Run Manually
+
+#### 1. Start PostgreSQL Locally
+
+You can start only the Docker PostgreSQL service:
+
+```bash
+docker compose up -d postgres
 ```
 
 This starts PostgreSQL with:
@@ -531,10 +595,10 @@ This starts PostgreSQL with:
 Database: text_to_learn
 User: text_to_learn
 Password: text_to_learn
-Port: 5432
+Port: 5433 on your Mac, forwarded to 5432 inside the container
 ```
 
-### 2. Start The Backend
+#### 2. Start The Backend
 
 If your machine has multiple Java versions, set Java 21+ first. On macOS, Java 23 also works for this project:
 
@@ -549,7 +613,7 @@ Then configure the backend:
 export AUTH0_ISSUER_URI='https://your-auth0-domain.us.auth0.com/'
 export AUTH0_AUDIENCE='https://text-to-learn-api'
 
-export SPRING_DATASOURCE_URL='jdbc:postgresql://localhost:5432/text_to_learn'
+export SPRING_DATASOURCE_URL='jdbc:postgresql://localhost:5433/text_to_learn'
 export SPRING_DATASOURCE_USERNAME='text_to_learn'
 export SPRING_DATASOURCE_PASSWORD='text_to_learn'
 
@@ -578,7 +642,7 @@ Tomcat started on port 8081
 Started TextToLearnApplication
 ```
 
-### 3. Start The Frontend
+#### 3. Start The Frontend
 
 ```bash
 cd client
@@ -645,6 +709,8 @@ Current tests cover:
 |   +-- db/migration       # Flyway migrations
 +-- src/test               # Backend tests
 +-- client
+|   +-- Dockerfile         # Frontend production image
+|   +-- nginx.conf         # Serves React and proxies /api to backend
 |   +-- src
 |   |   +-- components     # Layout, auth, UI, course, lesson components
 |   |   +-- context        # Shared app context
@@ -654,7 +720,9 @@ Current tests cover:
 |   |   +-- utils          # API client, routes, theme, audio options
 |   +-- tailwind.config.js
 |   +-- vite.config.js
-+-- docker-compose.yml     # Local PostgreSQL service
++-- Dockerfile             # Backend production image
++-- docker-compose.yml     # Full-stack local Docker environment
++-- .env.docker.example    # Example env file for Docker Compose
 ```
 
 ## Current Limitations
@@ -695,15 +763,14 @@ flowchart TD
 
 Planned improvements:
 
-1. Dockerize backend and frontend services.
-2. Extend GitHub Actions from CI to deployment after hosting targets are ready.
-3. Add asynchronous course generation with `GENERATING`, `READY`, and `FAILED` states.
-4. Add frontend polling while AI jobs are running.
-5. Add a PostgreSQL-backed `generation_jobs` table.
-6. Add low-priority lesson pre-generation after a course outline is ready.
-7. Add high-priority job upgrades when a user opens a specific lesson.
-8. Later migrate the job execution layer to RabbitMQ, SQS, or another broker.
-9. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
+1. Extend GitHub Actions from CI to deployment after hosting targets are ready.
+2. Add asynchronous course generation with `GENERATING`, `READY`, and `FAILED` states.
+3. Add frontend polling while AI jobs are running.
+4. Add a PostgreSQL-backed `generation_jobs` table.
+5. Add low-priority lesson pre-generation after a course outline is ready.
+6. Add high-priority job upgrades when a user opens a specific lesson.
+7. Later migrate the job execution layer to RabbitMQ, SQS, or another broker.
+8. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
 
 ## Resume Highlights
 
