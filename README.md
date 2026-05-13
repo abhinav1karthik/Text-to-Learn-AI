@@ -27,6 +27,7 @@ The project is built as a production-shaped Java + React application with OAuth2
 ## Core Features
 
 - AI course outline generation from any user topic.
+- Asynchronous course generation with persisted job status tracking and frontend polling.
 - Lazy lesson generation: the course outline is generated first, while each lesson is generated only when the user opens it.
 - Structured lesson renderer for headings, paragraphs, code blocks, video blocks, and MCQs.
 - Gemini structured JSON prompting with backend parsing, validation, retries, normalization, and fallback content.
@@ -52,7 +53,11 @@ flowchart LR
     API --> Security[Spring Security Resource Server]
     Security --> Auth0JWKS[Auth0 JWKS + Audience Validation]
 
-    API --> DB[(PostgreSQL / Neon)]
+    API --> Jobs[(generation_jobs)]
+    Jobs --> Worker[Spring Async Worker]
+    Worker --> Gemini
+    Worker --> DB[(PostgreSQL / Neon)]
+    API --> DB
     API --> Gemini[Gemini API]
     API --> YouTube[YouTube Data API]
     API --> R2[Cloudflare R2]
@@ -65,27 +70,33 @@ The React client talks only to the Spring Boot API. The backend owns authenticat
 
 ## Request Flow
 
-### Course Creation
+### Async Course Creation
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant UI as React UI
     participant API as Spring Boot API
+    participant W as Spring Async Worker
     participant A0 as Auth0
     participant G as Gemini
     participant DB as PostgreSQL
 
     U->>UI: Enter topic and click Generate
     UI->>A0: Ensure user is authenticated
-    UI->>API: POST /api/courses with Bearer token
+    UI->>API: POST /api/generation-jobs/course with Bearer token
     API->>A0: Validate JWT issuer and audience
     API->>API: Sync Auth0 profile into app_users
-    API->>G: Request structured course outline JSON
-    G-->>API: Course title, description, tags, modules, lesson titles
-    API->>API: Parse and validate outline
-    API->>DB: Save course, modules, planned lessons
-    API-->>UI: CourseResponse
+    API->>DB: Save generation_jobs row as QUEUED
+    API-->>UI: Return job id immediately
+    UI->>API: Poll GET /api/generation-jobs/{jobId}
+    W->>DB: Mark job RUNNING
+    W->>G: Request structured course outline JSON
+    G-->>W: Course title, description, tags, modules, lesson titles
+    W->>W: Parse and validate outline
+    W->>DB: Save course, modules, planned lessons
+    W->>DB: Mark job SUCCEEDED with course_id
+    API-->>UI: Job status SUCCEEDED with courseId
     UI->>U: Navigate to course home page
 ```
 
@@ -226,9 +237,11 @@ The database is PostgreSQL. Flyway owns schema evolution and Hibernate runs in v
 ```mermaid
 erDiagram
     APP_USERS ||--o{ COURSES : creates
+    APP_USERS ||--o{ GENERATION_JOBS : starts
     COURSES ||--o{ COURSE_MODULES : contains
     COURSE_MODULES ||--o{ LESSONS : contains
     LESSONS ||--o{ LESSON_AUDIO : has
+    COURSES ||--o{ GENERATION_JOBS : completes
 
     APP_USERS {
         uuid id PK
@@ -250,6 +263,20 @@ erDiagram
         varchar status
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    GENERATION_JOBS {
+        uuid id PK
+        uuid user_id FK
+        varchar type
+        varchar status
+        text prompt
+        uuid course_id FK
+        text error_message
+        timestamptz created_at
+        timestamptz updated_at
+        timestamptz started_at
+        timestamptz completed_at
     }
 
     COURSE_MODULES {
@@ -294,6 +321,7 @@ erDiagram
 
 - `app_users.auth0_subject` stores the Auth0 identity and links application data to authenticated users.
 - Course outlines are stored relationally as courses, modules, and planned lessons.
+- Long-running course outline generation is tracked in `generation_jobs` so the HTTP request does not wait for the LLM call.
 - Generated lesson content is stored as JSONB in `lessons.content_json` because each lesson contains flexible block types.
 - Lesson objectives are stored as JSONB in `lessons.objectives_json`.
 - YouTube video metadata is embedded inside video blocks in `content_json`, so the PDF and UI show the same selected videos.
@@ -699,6 +727,7 @@ Current tests cover:
 |   +-- common             # Error handling and shared exceptions
 |   +-- config             # CORS and Jackson configuration
 |   +-- course             # Course/module/lesson domain, APIs, services
+|   +-- generation         # Async AI generation jobs and background worker
 |   +-- health             # Public health endpoint
 |   +-- pdf                # Server-side PDF generation
 |   +-- security           # Auth0 JWT resource server setup
@@ -764,13 +793,10 @@ flowchart TD
 Planned improvements:
 
 1. Extend GitHub Actions from CI to deployment after hosting targets are ready.
-2. Add asynchronous course generation with `GENERATING`, `READY`, and `FAILED` states.
-3. Add frontend polling while AI jobs are running.
-4. Add a PostgreSQL-backed `generation_jobs` table.
-5. Add low-priority lesson pre-generation after a course outline is ready.
-6. Add high-priority job upgrades when a user opens a specific lesson.
-7. Later migrate the job execution layer to RabbitMQ, SQS, or another broker.
-8. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
+2. Add low-priority lesson pre-generation after a course outline is ready.
+3. Add high-priority job upgrades when a user opens a specific lesson.
+4. Later migrate the job execution layer to RabbitMQ, SQS, or another broker.
+5. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
 
 ## Resume Highlights
 

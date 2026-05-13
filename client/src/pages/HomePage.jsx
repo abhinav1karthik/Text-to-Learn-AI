@@ -8,15 +8,23 @@ import { useApiClient } from '../hooks/useApiClient.js';
 import { useAuth } from '../hooks/useAuth.js';
 import { ROUTES } from '../utils/routes.js';
 
+const ACTIVE_COURSE_JOB_KEY = 'text-to-learn:activeCourseGenerationJobId';
+const COURSE_JOB_POLL_INTERVAL_MS = 2000;
+
 export default function HomePage() {
   const [topic, setTopic] = useState('Segment Trees and Its Applications');
   const [error, setError] = useState('');
   const [isSubmitting, setSubmitting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState(() =>
+    window.localStorage.getItem(ACTIVE_COURSE_JOB_KEY),
+  );
+  const [activeJob, setActiveJob] = useState(null);
   const [recentCourses, setRecentCourses] = useState([]);
   const [isLoadingCourses, setLoadingCourses] = useState(false);
   const apiClient = useApiClient();
   const navigate = useNavigate();
   const { isAuthenticated, loginWithRedirect } = useAuth();
+  const isGenerationInProgress = isSubmitting || Boolean(activeJobId);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -52,6 +60,52 @@ export default function HomePage() {
     };
   }, [apiClient, isAuthenticated]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !activeJobId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timeoutId;
+
+    async function pollJob() {
+      try {
+        const job = await apiClient(`/api/generation-jobs/${activeJobId}`);
+        if (cancelled) {
+          return;
+        }
+
+        setActiveJob(job);
+
+        if (job.status === 'SUCCEEDED' && job.courseId) {
+          clearActiveJob();
+          navigate(ROUTES.course(job.courseId));
+          return;
+        }
+
+        if (job.status === 'FAILED') {
+          clearActiveJob();
+          setError(job.errorMessage || 'Course generation failed. Please try again.');
+          return;
+        }
+
+        timeoutId = window.setTimeout(pollJob, COURSE_JOB_POLL_INTERVAL_MS);
+      } catch (requestError) {
+        if (!cancelled) {
+          clearActiveJob();
+          setError(requestError.message);
+        }
+      }
+    }
+
+    pollJob();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeJobId, apiClient, isAuthenticated, navigate]);
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -70,16 +124,24 @@ export default function HomePage() {
     setError('');
 
     try {
-      const course = await apiClient('/api/courses', {
+      const job = await apiClient('/api/generation-jobs/course', {
         method: 'POST',
         body: JSON.stringify({ topic: trimmedTopic }),
       });
-      navigate(ROUTES.course(course.id));
+      setActiveJob(job);
+      setActiveJobId(job.id);
+      window.localStorage.setItem(ACTIVE_COURSE_JOB_KEY, job.id);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function clearActiveJob() {
+    setActiveJobId(null);
+    setActiveJob(null);
+    window.localStorage.removeItem(ACTIVE_COURSE_JOB_KEY);
   }
 
   return (
@@ -104,13 +166,22 @@ export default function HomePage() {
               placeholder="Segment Trees and Its Applications"
               value={topic}
               onChange={(event) => setTopic(event.target.value)}
-              disabled={isSubmitting}
+              disabled={isGenerationInProgress}
             />
           </div>
-          <Button className="sm:w-auto" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? 'Generating...' : 'Generate'}
+          <Button className="sm:w-auto" type="submit" disabled={isGenerationInProgress}>
+            {isGenerationInProgress ? 'Preparing...' : 'Generate'}
           </Button>
         </div>
+        {activeJobId ? (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 dark:border-blue-900/70 dark:bg-blue-950/30">
+            <LoadingSpinner label={jobStatusLabel(activeJob)} />
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              You can keep this page open while the backend generates the course. The page
+              will move to the course automatically when the outline is ready.
+            </p>
+          </div>
+        ) : null}
         <p className="text-sm leading-6 text-slate-500 dark:text-slate-400">
           Enter a topic such as data structures, guitar basics, or driving skills to create
           a personalized course home page.
@@ -162,4 +233,20 @@ export default function HomePage() {
 
 function countLessons(course) {
   return course.modules.reduce((total, module) => total + module.lessons.length, 0);
+}
+
+function jobStatusLabel(job) {
+  if (!job) {
+    return 'Queued course generation';
+  }
+
+  if (job.status === 'RUNNING') {
+    return 'Generating course outline';
+  }
+
+  if (job.status === 'QUEUED') {
+    return 'Waiting for generation worker';
+  }
+
+  return 'Preparing course';
 }
