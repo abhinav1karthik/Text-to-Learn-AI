@@ -37,6 +37,7 @@ The project is built as a production-shaped Java + React application with OAuth2
 - Multilingual audio explanations using Gemini transcript generation and Gemini TTS.
 - Cloudflare R2 audio storage with metadata stored in PostgreSQL.
 - Responsive React + Vite frontend using Tailwind CSS and dark mode.
+- GitHub Actions CI for backend tests and frontend production builds.
 - User-specific course storage through protected APIs.
 
 ## Current Architecture
@@ -608,6 +609,11 @@ cd client
 npm run build
 ```
 
+GitHub Actions runs both checks automatically on pushes and pull requests to `main`:
+
+- Backend: `./mvnw test` on Temurin Java 21
+- Frontend: `npm ci` and `npm run build` on Node.js 20
+
 Current tests cover:
 
 - Spring Boot context loading
@@ -690,7 +696,7 @@ flowchart TD
 Planned improvements:
 
 1. Dockerize backend and frontend services.
-2. Add GitHub Actions CI for backend tests and frontend builds.
+2. Extend GitHub Actions from CI to deployment after hosting targets are ready.
 3. Add asynchronous course generation with `GENERATING`, `READY`, and `FAILED` states.
 4. Add frontend polling while AI jobs are running.
 5. Add a PostgreSQL-backed `generation_jobs` table.
