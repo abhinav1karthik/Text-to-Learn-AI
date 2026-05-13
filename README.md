@@ -595,6 +595,8 @@ PostgreSQL: localhost:5433
 
 The Docker frontend is served by Nginx. Browser requests to `/api` are proxied inside Docker to the backend container, so `VITE_API_BASE_URL` should stay empty in `.env.docker`.
 
+By default, the Docker backend uses the PostgreSQL container at `jdbc:postgresql://postgres:5432/text_to_learn`. This is intentional: normal terminal exports like `SPRING_DATASOURCE_URL` are ignored by Docker Compose to prevent accidentally connecting the containerized app to Neon. If you intentionally want Docker to use Neon, set `DOCKER_SPRING_DATASOURCE_URL`, `DOCKER_SPRING_DATASOURCE_USERNAME`, and `DOCKER_SPRING_DATASOURCE_PASSWORD` in `.env.docker`.
+
 To stop the stack:
 
 ```bash
