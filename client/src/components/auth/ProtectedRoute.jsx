@@ -11,9 +11,9 @@ export default function ProtectedRoute({ children }) {
 
   if (isLoading) {
     return (
-      <section className="page-stack">
-        <p className="eyebrow">Session</p>
-        <h1>Checking your session</h1>
+      <section className="flex flex-col gap-2">
+        <p className="text-xs font-bold uppercase tracking-widest text-blue-600">Session</p>
+        <h1 className="text-3xl font-bold text-slate-900">Checking your session</h1>
       </section>
     );
   }

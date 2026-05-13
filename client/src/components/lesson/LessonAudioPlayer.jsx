@@ -70,20 +70,27 @@ export default function LessonAudioPlayer({ courseId, moduleIndex, lessonIndex, 
   }
 
   return (
-    <section className="lesson-audio-panel" aria-labelledby="lesson-audio-title">
+    <section className="flex flex-col gap-5 rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900" aria-labelledby="lesson-audio-title">
       <div>
-        <p className="eyebrow">Audio</p>
-        <h2 id="lesson-audio-title">{selectedLanguageLabel(language)} explanation</h2>
-        <p>
+        <p className="mb-2 text-xs font-bold uppercase tracking-widest text-blue-600">Audio</p>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white" id="lesson-audio-title">
+          {selectedLanguageLabel(language)} explanation
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
           Listen to a simplified audio walkthrough of this lesson, generated from the lesson
           content.
         </p>
       </div>
 
-      <div className="audio-options-grid">
-        <label className="audio-option-field">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
           <span>Explanation language</span>
-          <select value={language} onChange={handleLanguageChange} disabled={isLoading}>
+          <select
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+            value={language}
+            onChange={handleLanguageChange}
+            disabled={isLoading}
+          >
             {AUDIO_LANGUAGES.map((option) => (
               <option key={option.code} value={option.code}>
                 {option.label}
@@ -92,9 +99,14 @@ export default function LessonAudioPlayer({ courseId, moduleIndex, lessonIndex, 
           </select>
         </label>
 
-        <label className="audio-option-field">
+        <label className="flex flex-col gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
           <span>Voice</span>
-          <select value={voiceName} onChange={handleVoiceChange} disabled={isLoading}>
+          <select
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+            value={voiceName}
+            onChange={handleVoiceChange}
+            disabled={isLoading}
+          >
             {AUDIO_VOICES.map((voice) => (
               <option key={voice.name} value={voice.name}>
                 {voice.label} - {voice.description}
@@ -104,13 +116,13 @@ export default function LessonAudioPlayer({ courseId, moduleIndex, lessonIndex, 
         </label>
       </div>
 
-      <div className="lesson-audio-actions">
+      <div className="flex flex-wrap gap-3">
         <Button type="button" onClick={handlePrepareAudio} disabled={isLoading}>
           {isLoading ? 'Preparing audio' : audioUrl ? 'Prepare again' : `Prepare ${selectedLanguageLabel(language)} audio`}
         </Button>
         {audioUrl && (
           <a
-            className="button button-secondary button-link"
+            className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800"
             href={audioUrl}
             download={downloadName(lessonTitle, language, voiceName)}
           >
@@ -120,7 +132,7 @@ export default function LessonAudioPlayer({ courseId, moduleIndex, lessonIndex, 
       </div>
 
       {audioUrl && (
-        <audio className="lesson-audio-player" controls src={audioUrl}>
+        <audio className="mt-1 w-full" controls src={audioUrl}>
           Your browser does not support audio playback.
         </audio>
       )}

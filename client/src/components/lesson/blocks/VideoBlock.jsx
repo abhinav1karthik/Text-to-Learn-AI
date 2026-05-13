@@ -124,44 +124,55 @@ export default function VideoBlock({ block, query: queryProp }) {
   }, [apiClient, directEmbedUrl, maxResults, query, savedVideos.length]);
 
   return (
-    <section className="lesson-block video-block">
-      <h3>{block.title || 'Related videos'}</h3>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <h3 className="m-0 px-5 pb-3 pt-5 text-base font-semibold text-slate-900 dark:text-white">
+        {block.title || 'Related videos'}
+      </h3>
       {visibleVideos.length > 0 ? (
-        <div className="video-grid">
+        <div className="flex flex-col gap-4 px-5 pb-5">
           {visibleVideos.map((video) => (
-            <article className="video-result" key={video.videoId || video.embedUrl}>
-              <div className="video-frame">
+            <article
+              className="overflow-hidden rounded-xl border border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-950"
+              key={video.videoId || video.embedUrl}
+            >
+              <div className="relative aspect-video bg-gray-900">
                 <iframe
                   title={video.title || block.title || 'Lesson video'}
+                  className="absolute inset-0 h-full w-full border-0"
                   src={video.embedUrl}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 />
               </div>
-              <div className="video-result-meta">
-                <strong>{video.title || 'Related video'}</strong>
-                {video.channelTitle && <span>{video.channelTitle}</span>}
+              <div className="flex flex-col gap-1 px-4 py-3">
+                <strong className="text-sm font-semibold text-slate-900 dark:text-white">{video.title || 'Related video'}</strong>
+                {video.channelTitle && <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{video.channelTitle}</span>}
               </div>
             </article>
           ))}
         </div>
       ) : isLoading ? (
-        <div className="video-pending">
-          <p>Finding a relevant video for this lesson.</p>
+        <div className="flex flex-col gap-3 px-5 pb-5">
+          <p className="text-sm leading-6 text-slate-500 dark:text-slate-400">Finding a relevant video for this lesson.</p>
         </div>
       ) : searchUrl ? (
-        <div className="video-pending">
-          <p>
+        <div className="flex flex-col gap-3 px-5 pb-5">
+          <p className="text-sm leading-6 text-slate-500 dark:text-slate-400">
             {error
               ? 'Could not embed a video right now.'
               : 'No embeddable video was found for this query yet.'}
           </p>
-          <a className="video-search-link" href={searchUrl} target="_blank" rel="noreferrer">
+          <a
+            className="inline-flex rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-blue-600 no-underline transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-950 dark:text-blue-400 dark:hover:bg-blue-950/30"
+            href={searchUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
             Preview search results
           </a>
         </div>
       ) : (
-        <p className="muted-text">A video will be added here when one is available.</p>
+        <p className="px-5 pb-5 text-sm leading-6 text-slate-500 dark:text-slate-400">A video will be added here when one is available.</p>
       )}
     </section>
   );

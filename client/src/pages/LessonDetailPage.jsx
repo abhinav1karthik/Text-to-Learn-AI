@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import CourseLessonSidebar from '../components/course/CourseLessonSidebar.jsx';
 import LessonAudioPlayer from '../components/lesson/LessonAudioPlayer.jsx';
 import LessonPdfDownloadButton from '../components/lesson/LessonPdfDownloadButton.jsx';
 import LessonRenderer from '../components/lesson/LessonRenderer.jsx';
@@ -26,10 +27,10 @@ export default function LessonDetailPage() {
       setError('');
 
       try {
-        const lessonResponse = await apiClient(
-          `/api/courses/${courseId}/module/${moduleIndex}/lesson/${lessonIndex}`,
-        );
-        const courseResponse = await apiClient(`/api/courses/${courseId}`);
+        const [lessonResponse, courseResponse] = await Promise.all([
+          apiClient(`/api/courses/${courseId}/module/${moduleIndex}/lesson/${lessonIndex}`),
+          apiClient(`/api/courses/${courseId}`),
+        ]);
         if (!cancelled) {
           setLesson(lessonResponse);
           setCourse(courseResponse);
@@ -59,10 +60,10 @@ export default function LessonDetailPage() {
     }
 
     setSidebarContent(
-      <CourseLessonOutline
+      <CourseLessonSidebar
         course={course}
-        lessonIndex={Number(lessonIndex)}
-        moduleIndex={Number(moduleIndex)}
+        activeLessonIndex={Number(lessonIndex)}
+        activeModuleIndex={Number(moduleIndex)}
       />,
     );
 
@@ -92,96 +93,76 @@ export default function LessonDetailPage() {
     currentIndex >= 0 && currentIndex < flatLessons.length - 1 ? flatLessons[currentIndex + 1] : null;
 
   return (
-    <section className="lesson-workspace">
-      <div className="lesson-main">
-        <div>
-          <p className="eyebrow">Lesson</p>
-          <h1>{lesson.title}</h1>
-          <p className="lead">
-            {lesson.courseTitle} / {lesson.moduleTitle}
-          </p>
-        </div>
-
-        {lesson.objectives.length > 0 && (
-          <section className="lesson-objectives" aria-labelledby="lesson-objectives-title">
-            <h2 id="lesson-objectives-title">Objectives</h2>
-            <ul>
-              {lesson.objectives.map((objective) => (
-                <li key={objective}>{objective}</li>
-              ))}
-            </ul>
-          </section>
-        )}
-
-        <LessonAudioPlayer
-          courseId={courseId}
-          lessonIndex={lessonIndex}
-          lessonTitle={lesson.title}
-          moduleIndex={moduleIndex}
-        />
-
-        <LessonRenderer content={lesson.content} />
-
-        <LessonPdfDownloadButton
-          courseId={courseId}
-          lessonIndex={lessonIndex}
-          lessonTitle={lesson.title}
-          moduleIndex={moduleIndex}
-        />
-
-        <nav className="lesson-pager" aria-label="Lesson navigation">
-          {previousLesson ? (
-            <Link to={ROUTES.courseLesson(course.id, previousLesson.moduleIndex, previousLesson.lessonIndex)}>
-              <small>Previous</small>
-              <span>{previousLesson.lesson.title}</span>
-            </Link>
-          ) : (
-            <span />
-          )}
-          {nextLesson ? (
-            <Link to={ROUTES.courseLesson(course.id, nextLesson.moduleIndex, nextLesson.lessonIndex)}>
-              <small>Next</small>
-              <span>{nextLesson.lesson.title}</span>
-            </Link>
-          ) : (
-            <span />
-          )}
-        </nav>
-      </div>
-    </section>
-  );
-}
-
-function CourseLessonOutline({ course, lessonIndex, moduleIndex }) {
-  return (
-    <section className="sidebar-course-outline" aria-label="Course lessons">
-      <Link className="text-link" to={ROUTES.course(course.id)}>
-        Course outline
+    <section className="flex max-w-[1040px] flex-col gap-6">
+      <Link
+        className="inline-flex w-fit items-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 no-underline transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/30 dark:hover:text-blue-300"
+        to={ROUTES.course(courseId)}
+      >
+        Back to course home page
       </Link>
-      <h2>{course.title}</h2>
-      <div className="lesson-outline-scroll">
-        {course.modules.map((module, outlineModuleIndex) => (
-          <div className="lesson-outline-module" key={module.id}>
-            <strong>{module.title}</strong>
-            {module.lessons.map((outlineLesson, outlineLessonIndex) => {
-              const isActive =
-                outlineModuleIndex === moduleIndex && outlineLessonIndex === lessonIndex;
-              return (
-                <Link
-                  className={isActive ? 'is-active' : ''}
-                  key={outlineLesson.id}
-                  to={ROUTES.courseLesson(course.id, outlineModuleIndex, outlineLessonIndex)}
-                >
-                  <span>{outlineLesson.title}</span>
-                  <small className={`lesson-status ${outlineLesson.status.toLowerCase()}`}>
-                    {outlineLesson.status === 'GENERATED' ? 'Ready' : 'Plan'}
-                  </small>
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-bold uppercase tracking-widest text-blue-600">Lesson</p>
+        <h1 className="text-3xl font-bold leading-tight text-slate-900 dark:text-white">{lesson.title}</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          {lesson.courseTitle} / {lesson.moduleTitle}
+        </p>
       </div>
+
+      {lesson.objectives.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900" aria-labelledby="lesson-objectives-title">
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-white" id="lesson-objectives-title">
+            Objectives
+          </h2>
+          <ul className="mt-3 flex list-disc flex-col gap-2 pl-5">
+            {lesson.objectives.map((objective) => (
+              <li className="text-sm leading-relaxed text-slate-600 dark:text-slate-300" key={objective}>
+                {objective}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <LessonAudioPlayer
+        courseId={courseId}
+        lessonIndex={lessonIndex}
+        lessonTitle={lesson.title}
+        moduleIndex={moduleIndex}
+      />
+
+      <LessonRenderer content={lesson.content} />
+
+      <LessonPdfDownloadButton
+        courseId={courseId}
+        lessonIndex={lessonIndex}
+        lessonTitle={lesson.title}
+        moduleIndex={moduleIndex}
+      />
+
+      <nav className="grid grid-cols-1 gap-3 sm:grid-cols-2" aria-label="Lesson navigation">
+        {previousLesson ? (
+          <Link
+            className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 no-underline transition-colors hover:border-blue-300 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-800 dark:hover:bg-blue-950/30"
+            to={ROUTES.courseLesson(course.id, previousLesson.moduleIndex, previousLesson.lessonIndex)}
+          >
+            <small className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Previous</small>
+            <span className="text-sm font-semibold text-slate-900 dark:text-white">{previousLesson.lesson.title}</span>
+          </Link>
+        ) : (
+          <span />
+        )}
+        {nextLesson ? (
+          <Link
+            className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-4 text-right no-underline transition-colors hover:border-blue-300 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-blue-800 dark:hover:bg-blue-950/30"
+            to={ROUTES.courseLesson(course.id, nextLesson.moduleIndex, nextLesson.lessonIndex)}
+          >
+            <small className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Next</small>
+            <span className="text-sm font-semibold text-slate-900 dark:text-white">{nextLesson.lesson.title}</span>
+          </Link>
+        ) : (
+          <span />
+        )}
+      </nav>
     </section>
   );
 }
