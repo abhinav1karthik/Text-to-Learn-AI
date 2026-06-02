@@ -3,8 +3,7 @@ package com.texttolearn.generation.service;
 import com.texttolearn.course.dto.CourseResponse;
 import com.texttolearn.course.service.CourseService;
 import com.texttolearn.generation.model.GenerationJob;
-import com.texttolearn.generation.model.GenerationJobStatus;
-import com.texttolearn.generation.repository.GenerationJobRepository;
+import com.texttolearn.generation.model.GenerationJobErrorType;
 import java.util.UUID;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -14,55 +13,47 @@ public class GenerationJobWorker {
 
     private static final int MAX_ERROR_MESSAGE_LENGTH = 2000;
 
-    private final GenerationJobRepository generationJobRepository;
+    private final String workerId = "spring-worker-" + UUID.randomUUID();
+
+    private final GenerationJobTransitionService generationJobTransitionService;
     private final CourseService courseService;
 
     public GenerationJobWorker(
-            GenerationJobRepository generationJobRepository,
+            GenerationJobTransitionService generationJobTransitionService,
             CourseService courseService
     ) {
-        this.generationJobRepository = generationJobRepository;
+        this.generationJobTransitionService = generationJobTransitionService;
         this.courseService = courseService;
     }
 
     @Async("generationTaskExecutor")
     public void processCourseGenerationJob(UUID jobId) {
-        generationJobRepository.findByIdWithUser(jobId).ifPresent(job -> {
-            if (job.getStatus() != GenerationJobStatus.QUEUED) {
-                return;
-            }
+        String lockedBy = lockOwner();
+        if (!generationJobTransitionService.claim(jobId, lockedBy)) {
+            return;
+        }
 
+        generationJobTransitionService.getClaimedJobWithUser(jobId, lockedBy).ifPresent(job -> {
             try {
-                markRunning(job);
                 CourseResponse course = courseService.createCourseForGenerationJob(
                         job.getUser(),
                         job.getPrompt(),
                         job.getId()
                 );
-                markSucceeded(jobId, course.id());
+                generationJobTransitionService.markSucceeded(jobId, course.id(), lockedBy);
             } catch (RuntimeException exception) {
-                markFailed(jobId, exception);
+                generationJobTransitionService.markFailed(
+                        jobId,
+                        safeErrorMessage(exception),
+                        GenerationJobErrorType.UNKNOWN,
+                        lockedBy
+                );
             }
         });
     }
 
-    private void markRunning(GenerationJob job) {
-        job.markRunning();
-        generationJobRepository.saveAndFlush(job);
-    }
-
-    private void markSucceeded(UUID jobId, UUID courseId) {
-        generationJobRepository.findById(jobId).ifPresent(job -> {
-            job.markSucceeded(courseId);
-            generationJobRepository.saveAndFlush(job);
-        });
-    }
-
-    private void markFailed(UUID jobId, RuntimeException exception) {
-        generationJobRepository.findById(jobId).ifPresent(job -> {
-            job.markFailed(safeErrorMessage(exception));
-            generationJobRepository.saveAndFlush(job);
-        });
+    private String lockOwner() {
+        return workerId + ":" + Thread.currentThread().getName();
     }
 
     private String safeErrorMessage(RuntimeException exception) {

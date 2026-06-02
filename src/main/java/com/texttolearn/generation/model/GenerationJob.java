@@ -111,20 +111,24 @@ public class GenerationJob {
         this.updatedAt = now;
     }
 
-    public void markRunning() {
+    public void markClaimed(String lockedBy) {
         OffsetDateTime now = OffsetDateTime.now();
         this.status = GenerationJobStatus.RUNNING;
         this.attemptCount++;
         this.startedAt = now;
         this.lockedAt = now;
+        this.lockedBy = lockedBy;
         this.updatedAt = now;
         this.errorMessage = null;
         this.lastErrorType = null;
     }
 
+    public void markRunning() {
+        markClaimed(null);
+    }
+
     public void markRunning(String lockedBy) {
-        markRunning();
-        this.lockedBy = lockedBy;
+        markClaimed(lockedBy);
     }
 
     public void markSucceeded(UUID courseId) {
@@ -136,6 +140,18 @@ public class GenerationJob {
         this.lockedAt = null;
         this.lockedBy = null;
         this.completedAt = now;
+        this.updatedAt = now;
+    }
+
+    public void markRetryQueued(String errorMessage, GenerationJobErrorType errorType, OffsetDateTime nextRunAt) {
+        OffsetDateTime now = OffsetDateTime.now();
+        this.status = GenerationJobStatus.QUEUED;
+        this.errorMessage = errorMessage;
+        this.lastErrorType = errorType;
+        this.nextRunAt = nextRunAt;
+        this.lockedAt = null;
+        this.lockedBy = null;
+        this.completedAt = null;
         this.updatedAt = now;
     }
 
@@ -157,6 +173,12 @@ public class GenerationJob {
     public void markPublished() {
         this.lastPublishedAt = OffsetDateTime.now();
         this.updatedAt = this.lastPublishedAt;
+    }
+
+    public boolean isRunningLockedBy(String lockedBy) {
+        return this.status == GenerationJobStatus.RUNNING
+                && this.lockedBy != null
+                && this.lockedBy.equals(lockedBy);
     }
 
     public UUID getId() {

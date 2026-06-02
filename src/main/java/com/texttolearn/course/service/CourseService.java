@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class CourseService {
@@ -42,17 +43,20 @@ public class CourseService {
     private final ObjectMapper objectMapper;
     private final CourseRepository courseRepository;
     private final YouTubeVideoService youTubeVideoService;
+    private final TransactionTemplate transactionTemplate;
 
     public CourseService(
             CourseAiService courseAiService,
             ObjectMapper objectMapper,
             CourseRepository courseRepository,
-            YouTubeVideoService youTubeVideoService
+            YouTubeVideoService youTubeVideoService,
+            TransactionTemplate transactionTemplate
     ) {
         this.courseAiService = courseAiService;
         this.objectMapper = objectMapper;
         this.courseRepository = courseRepository;
         this.youTubeVideoService = youTubeVideoService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Transactional(readOnly = true)
@@ -67,51 +71,67 @@ public class CourseService {
                 .toList();
     }
 
-    @Transactional
     public CourseResponse createCourse(AppUser user, String topic) {
-        return createCourse(user, topic, null);
+        GeneratedCourseOutline outline = generateCourseOutline(topic);
+        return persistCourse(user, topic, outline, null);
     }
 
-    @Transactional
     public CourseResponse createCourseForGenerationJob(AppUser user, String topic, UUID generationJobId) {
-        return courseRepository.findByGenerationJobId(generationJobId)
+        CourseResponse existingCourse = transactionTemplate.execute(status -> courseRepository
+                .findByGenerationJobId(generationJobId)
                 .map(this::toResponse)
-                .orElseGet(() -> createCourse(user, topic, generationJobId));
+                .orElse(null));
+        if (existingCourse != null) {
+            return existingCourse;
+        }
+
+        GeneratedCourseOutline outline = generateCourseOutline(topic);
+        return persistCourse(user, topic, outline, generationJobId);
     }
 
-    private CourseResponse createCourse(AppUser user, String topic, UUID generationJobId) {
+    private GeneratedCourseOutline generateCourseOutline(String topic) {
         GeneratedCourseOutline outline = courseAiService.generateCourseOutline(topic);
         validateOutline(outline);
+        return outline;
+    }
 
-        Course course = new Course(
-                user,
-                topic.trim(),
-                outline.title().trim(),
-                outline.description()
-        );
-        if (generationJobId != null) {
-            course.assignGenerationJob(generationJobId);
-        }
-        course.replaceTagsJson(writeTagsJson(outline.tags()));
-
-        for (int moduleIndex = 0; moduleIndex < outline.modules().size(); moduleIndex++) {
-            GeneratedModuleOutline moduleOutline = outline.modules().get(moduleIndex);
-            CourseModule module = new CourseModule(
-                    moduleOutline.title().trim(),
-                    moduleOutline.summary(),
-                    moduleIndex + 1
+    private CourseResponse persistCourse(
+            AppUser user,
+            String topic,
+            GeneratedCourseOutline outline,
+            UUID generationJobId
+    ) {
+        return transactionTemplate.execute(status -> {
+            Course course = new Course(
+                    user,
+                    topic.trim(),
+                    outline.title().trim(),
+                    outline.description()
             );
+            if (generationJobId != null) {
+                course.assignGenerationJob(generationJobId);
+            }
+            course.replaceTagsJson(writeTagsJson(outline.tags()));
 
-            List<String> lessonTitles = moduleOutline.lessons();
-            for (int lessonIndex = 0; lessonIndex < lessonTitles.size(); lessonIndex++) {
-                module.addLesson(new Lesson(lessonTitles.get(lessonIndex).trim(), lessonIndex + 1));
+            for (int moduleIndex = 0; moduleIndex < outline.modules().size(); moduleIndex++) {
+                GeneratedModuleOutline moduleOutline = outline.modules().get(moduleIndex);
+                CourseModule module = new CourseModule(
+                        moduleOutline.title().trim(),
+                        moduleOutline.summary(),
+                        moduleIndex + 1
+                );
+
+                List<String> lessonTitles = moduleOutline.lessons();
+                for (int lessonIndex = 0; lessonIndex < lessonTitles.size(); lessonIndex++) {
+                    module.addLesson(new Lesson(lessonTitles.get(lessonIndex).trim(), lessonIndex + 1));
+                }
+
+                course.addModule(module);
             }
 
-            course.addModule(module);
-        }
-
-        Course savedCourse = courseRepository.saveAndFlush(course);
-        return toResponse(savedCourse);
+            Course savedCourse = courseRepository.saveAndFlush(course);
+            return toResponse(savedCourse);
+        });
     }
 
     @Transactional(readOnly = true)
