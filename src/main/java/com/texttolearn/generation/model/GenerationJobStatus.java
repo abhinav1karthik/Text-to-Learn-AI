@@ -4,5 +4,6 @@ public enum GenerationJobStatus {
     QUEUED,
     RUNNING,
     SUCCEEDED,
-    FAILED
+    FAILED,
+    CANCELLED
 }

@@ -34,7 +34,11 @@ public class GenerationJobWorker {
 
             try {
                 markRunning(job);
-                CourseResponse course = courseService.createCourse(job.getUser(), job.getPrompt());
+                CourseResponse course = courseService.createCourseForGenerationJob(
+                        job.getUser(),
+                        job.getPrompt(),
+                        job.getId()
+                );
                 markSucceeded(jobId, course.id());
             } catch (RuntimeException exception) {
                 markFailed(jobId, exception);

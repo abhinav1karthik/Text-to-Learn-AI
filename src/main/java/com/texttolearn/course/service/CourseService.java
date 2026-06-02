@@ -69,6 +69,17 @@ public class CourseService {
 
     @Transactional
     public CourseResponse createCourse(AppUser user, String topic) {
+        return createCourse(user, topic, null);
+    }
+
+    @Transactional
+    public CourseResponse createCourseForGenerationJob(AppUser user, String topic, UUID generationJobId) {
+        return courseRepository.findByGenerationJobId(generationJobId)
+                .map(this::toResponse)
+                .orElseGet(() -> createCourse(user, topic, generationJobId));
+    }
+
+    private CourseResponse createCourse(AppUser user, String topic, UUID generationJobId) {
         GeneratedCourseOutline outline = courseAiService.generateCourseOutline(topic);
         validateOutline(outline);
 
@@ -78,6 +89,9 @@ public class CourseService {
                 outline.title().trim(),
                 outline.description()
         );
+        if (generationJobId != null) {
+            course.assignGenerationJob(generationJobId);
+        }
         course.replaceTagsJson(writeTagsJson(outline.tags()));
 
         for (int moduleIndex = 0; moduleIndex < outline.modules().size(); moduleIndex++) {

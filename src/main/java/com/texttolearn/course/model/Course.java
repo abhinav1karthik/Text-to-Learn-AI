@@ -37,6 +37,9 @@ public class Course {
     @Column(nullable = false, length = 200)
     private String title;
 
+    @Column(name = "generation_job_id", unique = true)
+    private UUID generationJobId;
+
     @Column(columnDefinition = "text")
     private String description;
 
@@ -83,6 +86,11 @@ public class Course {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    public void assignGenerationJob(UUID generationJobId) {
+        this.generationJobId = generationJobId;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public UUID getId() {
         return id;
     }
@@ -97,6 +105,10 @@ public class Course {
 
     public String getTitle() {
         return title;
+    }
+
+    public UUID getGenerationJobId() {
+        return generationJobId;
     }
 
     public String getDescription() {

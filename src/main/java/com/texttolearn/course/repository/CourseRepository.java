@@ -12,4 +12,6 @@ public interface CourseRepository extends JpaRepository<Course, UUID> {
     List<Course> findByUserOrderByCreatedAtDesc(AppUser user);
 
     Optional<Course> findByIdAndUser(UUID id, AppUser user);
+
+    Optional<Course> findByGenerationJobId(UUID generationJobId);
 }
