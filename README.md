@@ -542,6 +542,7 @@ VITE_AUTH0_AUDIENCE=https://text-to-learn-api
 - Java 21 or newer
 - Node.js 20 or newer
 - PostgreSQL 17 locally, Neon, or the Docker Compose Postgres service
+- RabbitMQ, or the Docker Compose RabbitMQ service
 - Docker Desktop if running the containerized stack
 - Auth0 SPA application and API audience
 - Gemini API key
@@ -569,6 +570,9 @@ AUTH0_JWK_SET_URI=https://your-auth0-domain.us.auth0.com/.well-known/jwks.json
 
 GEMINI_API_KEY=your-gemini-api-key
 YOUTUBE_API_KEY=your-youtube-api-key
+
+RABBITMQ_USERNAME=text_to_learn
+RABBITMQ_PASSWORD=text_to_learn
 ```
 
 For Auth0 local Docker testing, add this URL in the Auth0 SPA application settings:
@@ -591,7 +595,10 @@ The Docker stack exposes:
 Frontend:   http://localhost:3000
 Backend:    http://localhost:8081
 PostgreSQL: localhost:5433
+RabbitMQ:   http://localhost:15672
 ```
+
+RabbitMQ management login defaults to the `RABBITMQ_USERNAME` and `RABBITMQ_PASSWORD` values in `.env.docker`. The Compose stack also exposes AMQP on `localhost:5672`.
 
 The Docker frontend is served by Nginx. Browser requests to `/api` are proxied inside Docker to the backend container, so `VITE_API_BASE_URL` should stay empty in `.env.docker`.
 
@@ -760,9 +767,9 @@ Current tests cover:
 
 This project intentionally keeps some production concerns simple while the core AI learning flow is being built.
 
-- Course outline generation is currently synchronous.
+- Course outline generation currently uses DB-backed jobs with an in-process Spring async worker.
 - Lesson generation is lazy and request-driven, not queue-driven.
-- There is no RabbitMQ/SQS worker layer yet.
+- RabbitMQ infrastructure is available for local development, but job execution has not yet been migrated to RabbitMQ consumers.
 - There is no semantic/vector cache yet for similar lesson reuse.
 - YouTube cache is in-memory, so it resets when the backend restarts.
 
@@ -797,7 +804,7 @@ Planned improvements:
 1. Extend GitHub Actions from CI to deployment after hosting targets are ready.
 2. Add low-priority lesson pre-generation after a course outline is ready.
 3. Add high-priority job upgrades when a user opens a specific lesson.
-4. Later migrate the job execution layer to RabbitMQ, SQS, or another broker.
+4. Migrate the job execution layer from Spring async execution to RabbitMQ consumers.
 5. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
 
 ## Resume Highlights
