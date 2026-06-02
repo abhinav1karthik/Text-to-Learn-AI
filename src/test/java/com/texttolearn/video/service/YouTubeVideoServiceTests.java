@@ -26,13 +26,19 @@ class YouTubeVideoServiceTests {
                 {
                   "items": [
                     {
-                      "id": { "videoId": "abc123" },
+                      "id": "abc123",
                       "snippet": {
                         "title": "Segment Trees Explained",
                         "channelTitle": "Algorithms Channel",
                         "thumbnails": {
                           "medium": { "url": "https://img.youtube.com/abc123.jpg" }
                         }
+                      },
+                      "contentDetails": {
+                        "duration": "PT8M10S"
+                      },
+                      "status": {
+                        "embeddable": true
                       }
                     }
                   ]
@@ -48,6 +54,62 @@ class YouTubeVideoServiceTests {
         assertThat(videos.getFirst().title()).isEqualTo("Segment Trees Explained");
         assertThat(videos.getFirst().channelTitle()).isEqualTo("Algorithms Channel");
         assertThat(videos.getFirst().thumbnailUrl()).isEqualTo("https://img.youtube.com/abc123.jpg");
+    }
+
+    @Test
+    void filtersShortVideosFromDetailedVideoResponses() {
+        String responseBody = """
+                {
+                  "items": [
+                    {
+                      "id": "short123",
+                      "snippet": {
+                        "title": "Too Short",
+                        "channelTitle": "Shorts Channel"
+                      },
+                      "contentDetails": {
+                        "duration": "PT45S"
+                      },
+                      "status": {
+                        "embeddable": true
+                      }
+                    },
+                    {
+                      "id": "normal123",
+                      "snippet": {
+                        "title": "Full Explanation",
+                        "channelTitle": "Teaching Channel"
+                      },
+                      "contentDetails": {
+                        "duration": "PT6M5S"
+                      },
+                      "status": {
+                        "embeddable": true
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        var videos = service.parseVideos(responseBody);
+
+        assertThat(videos).hasSize(1);
+        assertThat(videos.getFirst().videoId()).isEqualTo("normal123");
+    }
+
+    @Test
+    void parsesVideoIdsFromSearchResponse() {
+        String responseBody = """
+                {
+                  "items": [
+                    { "id": { "videoId": "first123" } },
+                    { "id": { "videoId": "second123" } },
+                    { "id": { "videoId": "first123" } }
+                  ]
+                }
+                """;
+
+        assertThat(service.parseVideoIds(responseBody)).containsExactly("first123", "second123");
     }
 
     @Test

@@ -1,36 +1,72 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApiClient } from '../../../hooks/useApiClient.js';
 
-function getYouTubeEmbedUrl(block) {
-  if (block.embedUrl) {
-    return block.embedUrl;
-  }
-
-  if (block.videoId) {
-    return `https://www.youtube.com/embed/${block.videoId}`;
-  }
-
-  const sourceUrl = block.url || block.watchUrl;
-  if (!sourceUrl) {
+function getYouTubeVideoId(source) {
+  if (!source) {
     return null;
+  }
+
+  const value = String(source).trim();
+
+  if (/^[\w-]{11}$/.test(value)) {
+    return value;
   }
 
   try {
-    const parsedUrl = new URL(sourceUrl);
+    const parsedUrl = new URL(value);
 
     if (parsedUrl.hostname.includes('youtu.be')) {
-      return `https://www.youtube.com/embed/${parsedUrl.pathname.slice(1)}`;
+      return parsedUrl.pathname.split('/').filter(Boolean)[0] || null;
     }
 
-    if (parsedUrl.hostname.includes('youtube.com')) {
-      const videoId = parsedUrl.searchParams.get('v');
-      return videoId ? `https://www.youtube.com/embed/${videoId}` : sourceUrl;
-    }
+    if (parsedUrl.hostname.includes('youtube.com') || parsedUrl.hostname.includes('youtube-nocookie.com')) {
+      const watchId = parsedUrl.searchParams.get('v');
+      if (watchId) {
+        return watchId;
+      }
 
-    return sourceUrl;
+      const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+      if (pathParts.includes('shorts')) {
+        return null;
+      }
+
+      const embedIndex = pathParts.findIndex((part) => part === 'embed');
+      if (embedIndex >= 0 && pathParts[embedIndex + 1]) {
+        return pathParts[embedIndex + 1];
+      }
+    }
   } catch {
     return null;
   }
+
+  return null;
+}
+
+function getYouTubeEmbedUrl(block) {
+  const videoId =
+    getYouTubeVideoId(block.videoId) ||
+    getYouTubeVideoId(block.watchUrl) ||
+    getYouTubeVideoId(block.embedUrl) ||
+    getYouTubeVideoId(block.url);
+
+  if (!videoId) {
+    return null;
+  }
+
+  return `https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1`;
+}
+
+function getYouTubeWatchUrl(block) {
+  if (block.watchUrl) {
+    return block.watchUrl;
+  }
+
+  const videoId =
+    getYouTubeVideoId(block.videoId) ||
+    getYouTubeVideoId(block.embedUrl) ||
+    getYouTubeVideoId(block.url);
+
+  return videoId ? `https://www.youtube.com/watch?v=${videoId}` : null;
 }
 
 function getSavedVideos(block) {
@@ -42,6 +78,7 @@ function getSavedVideos(block) {
     .map((video) => ({
       ...video,
       embedUrl: getYouTubeEmbedUrl(video),
+      watchUrl: getYouTubeWatchUrl(video),
     }))
     .filter((video) => video.embedUrl);
 }
@@ -66,6 +103,7 @@ export default function VideoBlock({ block, query: queryProp }) {
   const [isLoading, setLoading] = useState(false);
   const savedVideos = useMemo(() => getSavedVideos(block), [block]);
   const directEmbedUrl = getYouTubeEmbedUrl(block);
+  const directWatchUrl = getYouTubeWatchUrl(block);
   const query = queryProp || getVideoQuery(block);
   const maxResults = getMaxResults(block);
   const searchUrl = query
@@ -75,13 +113,14 @@ export default function VideoBlock({ block, query: queryProp }) {
     ? [
         {
           embedUrl: directEmbedUrl,
+          watchUrl: directWatchUrl,
           title: block.title || 'Related video',
           channelTitle: block.channelTitle,
         },
       ]
     : [];
   const visibleVideos =
-    directVideo.length > 0 ? directVideo : savedVideos.length > 0 ? savedVideos : videos;
+    savedVideos.length > 0 ? savedVideos : directVideo.length > 0 ? directVideo : videos;
 
   useEffect(() => {
     if (directEmbedUrl || savedVideos.length > 0 || !query) {
@@ -142,10 +181,23 @@ export default function VideoBlock({ block, query: queryProp }) {
                   src={video.embedUrl}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
+                  loading="lazy"
+                  referrerPolicy="strict-origin-when-cross-origin"
                 />
               </div>
               <div className="flex flex-col gap-1 px-4 py-3">
-                <strong className="text-sm font-semibold text-slate-900 dark:text-white">{video.title || 'Related video'}</strong>
+                {video.watchUrl ? (
+                  <a
+                    className="text-sm font-semibold text-slate-900 no-underline hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white dark:hover:text-blue-300"
+                    href={video.watchUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {video.title || 'Related video'}
+                  </a>
+                ) : (
+                  <strong className="text-sm font-semibold text-slate-900 dark:text-white">{video.title || 'Related video'}</strong>
+                )}
                 {video.channelTitle && <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{video.channelTitle}</span>}
               </div>
             </article>

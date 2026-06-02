@@ -11,9 +11,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +30,7 @@ public class YouTubeVideoService {
 
     private static final String YOUTUBE_EMBED_BASE_URL = "https://www.youtube.com/embed/";
     private static final String YOUTUBE_WATCH_BASE_URL = "https://www.youtube.com/watch?v=";
+    private static final Duration MINIMUM_REGULAR_VIDEO_DURATION = Duration.ofMinutes(4);
 
     private final Clock clock;
     private final ObjectMapper objectMapper;
@@ -79,14 +82,37 @@ public class YouTubeVideoService {
                             .path("/search")
                             .queryParam("part", "snippet")
                             .queryParam("q", normalizedQuery)
-                            .queryParam("maxResults", sanitizedMaxResults)
+                            .queryParam("maxResults", searchCandidateCount(sanitizedMaxResults))
                             .queryParam("type", "video")
                             .queryParam("videoEmbeddable", "true")
+                            .queryParam("videoDuration", "medium")
                             .queryParam("safeSearch", "moderate")
                             .queryParam(
                                     "fields",
-                                    "items(id/videoId,snippet/title,snippet/channelTitle,"
-                                            + "snippet/thumbnails/default/url,snippet/thumbnails/medium/url)"
+                                    "items(id/videoId)"
+                            )
+                            .queryParam("key", youtubeProperties.apiKey())
+                            .build())
+                    .retrieve()
+                    .body(String.class);
+
+            List<String> videoIds = parseVideoIds(responseBody);
+            if (videoIds.isEmpty()) {
+                YouTubeVideoSearchResponse response = new YouTubeVideoSearchResponse(normalizedQuery, List.of());
+                cache.put(cacheKey(normalizedQuery, sanitizedMaxResults), new CacheEntry(response, expiresAt()));
+                return response;
+            }
+
+            String detailsResponseBody = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/videos")
+                            .queryParam("part", "snippet,contentDetails,status")
+                            .queryParam("id", String.join(",", videoIds))
+                            .queryParam(
+                                    "fields",
+                                    "items(id,snippet/title,snippet/channelTitle,"
+                                            + "snippet/thumbnails/default/url,snippet/thumbnails/medium/url,"
+                                            + "contentDetails/duration,status/embeddable)"
                             )
                             .queryParam("key", youtubeProperties.apiKey())
                             .build())
@@ -95,7 +121,9 @@ public class YouTubeVideoService {
 
             YouTubeVideoSearchResponse response = new YouTubeVideoSearchResponse(
                     normalizedQuery,
-                    parseVideos(responseBody)
+                    parseVideos(detailsResponseBody).stream()
+                            .limit(sanitizedMaxResults)
+                            .toList()
             );
             cache.put(cacheKey(normalizedQuery, sanitizedMaxResults), new CacheEntry(response, expiresAt()));
             return response;
@@ -118,7 +146,11 @@ public class YouTubeVideoService {
 
         List<YouTubeVideoResponse> videos = new ArrayList<>();
         for (JsonNode item : items) {
-            String videoId = textAt(item, "id", "videoId");
+            if (isShortOrNonEmbeddable(item)) {
+                continue;
+            }
+
+            String videoId = firstNonBlank(textAt(item, "id"), textAt(item, "id", "videoId"));
             if (videoId == null || videoId.isBlank()) {
                 continue;
             }
@@ -135,6 +167,24 @@ public class YouTubeVideoService {
         }
 
         return videos;
+    }
+
+    List<String> parseVideoIds(String responseBody) {
+        JsonNode root = readResponse(responseBody);
+        JsonNode items = root.path("items");
+        if (!items.isArray() || items.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> videoIds = new LinkedHashSet<>();
+        for (JsonNode item : items) {
+            String videoId = firstNonBlank(textAt(item, "id", "videoId"), textAt(item, "id"));
+            if (videoId != null) {
+                videoIds.add(videoId);
+            }
+        }
+
+        return List.copyOf(videoIds);
     }
 
     private JsonNode readResponse(String responseBody) {
@@ -162,6 +212,10 @@ public class YouTubeVideoService {
         return query.toLowerCase(Locale.ROOT) + "::" + maxResults;
     }
 
+    private int searchCandidateCount(int requestedMaxResults) {
+        return Math.max(requestedMaxResults * 4, 8);
+    }
+
     private Instant expiresAt() {
         return clock.instant().plus(Duration.ofMinutes(youtubeProperties.sanitizedCacheTtlMinutes()));
     }
@@ -186,6 +240,36 @@ public class YouTubeVideoService {
         }
 
         return current.asText();
+    }
+
+    private boolean isShortOrNonEmbeddable(JsonNode item) {
+        JsonNode embeddable = item.path("status").path("embeddable");
+        if (!embeddable.isMissingNode() && !embeddable.asBoolean(false)) {
+            return true;
+        }
+
+        String durationText = textAt(item, "contentDetails", "duration");
+        if (durationText == null || durationText.isBlank()) {
+            return false;
+        }
+
+        try {
+            return Duration.parse(durationText).compareTo(MINIMUM_REGULAR_VIDEO_DURATION) < 0;
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first;
+        }
+
+        if (second != null && !second.isBlank()) {
+            return second;
+        }
+
+        return null;
     }
 
     private record CacheEntry(YouTubeVideoSearchResponse response, Instant expiresAt) {

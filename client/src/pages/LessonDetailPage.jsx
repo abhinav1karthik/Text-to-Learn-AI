@@ -27,13 +27,20 @@ export default function LessonDetailPage() {
       setError('');
 
       try {
-        const [lessonResponse, courseResponse] = await Promise.all([
-          apiClient(`/api/courses/${courseId}/module/${moduleIndex}/lesson/${lessonIndex}`),
-          apiClient(`/api/courses/${courseId}`),
-        ]);
+        const lessonResponse = await apiClient(
+          `/api/courses/${courseId}/module/${moduleIndex}/lesson/${lessonIndex}`,
+        );
+        const courseResponse = await apiClient(`/api/courses/${courseId}`);
         if (!cancelled) {
           setLesson(lessonResponse);
-          setCourse(courseResponse);
+          setCourse(
+            withUpdatedLessonStatus(
+              courseResponse,
+              Number(moduleIndex),
+              Number(lessonIndex),
+              lessonResponse.status,
+            ),
+          );
         }
       } catch (requestError) {
         if (!cancelled) {
@@ -176,4 +183,33 @@ function flattenLessons(course) {
       moduleIndex,
     })),
   );
+}
+
+function withUpdatedLessonStatus(course, moduleIndex, lessonIndex, status) {
+  if (!course || !status) {
+    return course;
+  }
+
+  return {
+    ...course,
+    modules: course.modules.map((module, currentModuleIndex) => {
+      if (currentModuleIndex !== moduleIndex) {
+        return module;
+      }
+
+      return {
+        ...module,
+        lessons: module.lessons.map((lesson, currentLessonIndex) => {
+          if (currentLessonIndex !== lessonIndex) {
+            return lesson;
+          }
+
+          return {
+            ...lesson,
+            status,
+          };
+        }),
+      };
+    }),
+  };
 }
