@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.texttolearn.ai.dto.GeneratedCourseOutline;
 import com.texttolearn.ai.dto.GeneratedLessonContent;
 import com.texttolearn.ai.dto.GeneratedModuleOutline;
+import com.texttolearn.ai.error.AiGenerationException;
 import com.texttolearn.ai.service.CourseAiService;
+import com.texttolearn.common.error.ResourceNotFoundException;
 import com.texttolearn.course.dto.CourseResponse;
 import com.texttolearn.course.repository.CourseRepository;
 import com.texttolearn.course.service.CourseService;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -59,6 +62,15 @@ class GenerationJobServiceTests {
 
     @Autowired
     private CapturingGenerationJobPublisher generationJobPublisher;
+
+    @Autowired
+    private TestCourseAiService courseAiService;
+
+    @BeforeEach
+    void resetFakes() {
+        courseAiService.reset();
+        generationJobPublisher.clear();
+    }
 
     @Test
     void createsCourseGenerationJobAndPublishesRabbitMessageAfterCommit() {
@@ -149,6 +161,79 @@ class GenerationJobServiceTests {
     }
 
     @Test
+    void retryableRateLimitFailureIsRequeuedWithBackoff() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|rate-limit-user", "rate-limit@example.com", "Rate Limit Student", null)
+        );
+        courseAiService.failCourseOutlineWith(new AiGenerationException(
+                "Gemini request failed with status 429: RESOURCE_EXHAUSTED rate limit"
+        ));
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Rate Limited Course"
+        );
+
+        OffsetDateTime beforeProcessing = OffsetDateTime.now();
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+
+        GenerationJob retryJob = generationJobRepository.findById(queuedJob.id()).orElseThrow();
+        assertThat(retryJob.getStatus()).isEqualTo(GenerationJobStatus.QUEUED);
+        assertThat(retryJob.getLastErrorType()).isEqualTo(GenerationJobErrorType.AI_RATE_LIMIT);
+        assertThat(retryJob.getErrorMessage()).contains("429");
+        assertThat(retryJob.getAttemptCount()).isEqualTo(1);
+        assertThat(retryJob.getLockedBy()).isNull();
+        assertThat(retryJob.getLockedAt()).isNull();
+        assertThat(retryJob.getCompletedAt()).isNull();
+        assertThat(retryJob.getLastPublishedAt()).isNull();
+        assertThat(retryJob.getNextRunAt()).isAfterOrEqualTo(beforeProcessing.plusSeconds(14));
+        assertThat(retryJob.getNextRunAt()).isBeforeOrEqualTo(beforeProcessing.plusSeconds(20));
+    }
+
+    @Test
+    void retryableBadAiResponseIsRequeued() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|bad-ai-user", "bad-ai@example.com", "Bad AI Student", null)
+        );
+        courseAiService.failCourseOutlineWith(new AiGenerationException(
+                "Gemini returned invalid course outline JSON."
+        ));
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Bad AI Response Course"
+        );
+
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+
+        GenerationJob retryJob = generationJobRepository.findById(queuedJob.id()).orElseThrow();
+        assertThat(retryJob.getStatus()).isEqualTo(GenerationJobStatus.QUEUED);
+        assertThat(retryJob.getLastErrorType()).isEqualTo(GenerationJobErrorType.AI_BAD_RESPONSE);
+        assertThat(retryJob.getAttemptCount()).isEqualTo(1);
+        assertThat(retryJob.getCompletedAt()).isNull();
+    }
+
+    @Test
+    void permanentNotFoundFailureFailsFast() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|permanent-failure-user", "permanent@example.com", "Permanent Student", null)
+        );
+        courseAiService.failCourseOutlineWith(new ResourceNotFoundException("Course source not found"));
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Permanent Failure Course"
+        );
+
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+
+        GenerationJob failedJob = generationJobRepository.findById(queuedJob.id()).orElseThrow();
+        assertThat(failedJob.getStatus()).isEqualTo(GenerationJobStatus.FAILED);
+        assertThat(failedJob.getLastErrorType()).isEqualTo(GenerationJobErrorType.NOT_FOUND);
+        assertThat(failedJob.getErrorMessage()).isEqualTo("Course source not found");
+        assertThat(failedJob.getAttemptCount()).isEqualTo(1);
+        assertThat(failedJob.getCompletedAt()).isNotNull();
+        assertThat(failedJob.getLockedBy()).isNull();
+    }
+
+    @Test
     void atomicallyClaimsQueuedJobOnlyOnce() {
         AppUser user = appUserRepository.save(
                 new AppUser("auth0|atomic-claim-user", "atomic@example.com", "Atomic Student", null)
@@ -223,35 +308,52 @@ class GenerationJobServiceTests {
 
         @Bean
         @Primary
-        CourseAiService fakeCourseAiService() {
-            return new CourseAiService() {
-                @Override
-                public GeneratedCourseOutline generateCourseOutline(String topic) {
-                    return new GeneratedCourseOutline(
-                            "Async Segment Trees",
-                            "A generated outline from a background job.",
-                            List.of("Algorithms"),
-                            List.of(new GeneratedModuleOutline(
-                                    "Foundations",
-                                    "Core segment tree concepts.",
-                                    List.of("What is a Segment Tree?")
-                            ))
-                    );
-                }
+        TestCourseAiService fakeCourseAiService() {
+            return new TestCourseAiService();
+        }
+    }
 
-                @Override
-                public GeneratedLessonContent generateLessonContent(
-                        String courseTitle,
-                        String moduleTitle,
-                        String lessonTitle
-                ) {
-                    return new GeneratedLessonContent(
-                            lessonTitle,
-                            List.of("Understand the lesson"),
-                            List.of(Map.of("type", "paragraph", "text", "Generated lesson content."))
-                    );
-                }
-            };
+    static class TestCourseAiService implements CourseAiService {
+
+        private RuntimeException courseOutlineException;
+
+        void reset() {
+            courseOutlineException = null;
+        }
+
+        void failCourseOutlineWith(RuntimeException exception) {
+            courseOutlineException = exception;
+        }
+
+        @Override
+        public GeneratedCourseOutline generateCourseOutline(String topic) {
+            if (courseOutlineException != null) {
+                throw courseOutlineException;
+            }
+
+            return new GeneratedCourseOutline(
+                    "Async Segment Trees",
+                    "A generated outline from a background job.",
+                    List.of("Algorithms"),
+                    List.of(new GeneratedModuleOutline(
+                            "Foundations",
+                            "Core segment tree concepts.",
+                            List.of("What is a Segment Tree?")
+                    ))
+            );
+        }
+
+        @Override
+        public GeneratedLessonContent generateLessonContent(
+                String courseTitle,
+                String moduleTitle,
+                String lessonTitle
+        ) {
+            return new GeneratedLessonContent(
+                    lessonTitle,
+                    List.of("Understand the lesson"),
+                    List.of(Map.of("type", "paragraph", "text", "Generated lesson content."))
+            );
         }
     }
 
@@ -268,6 +370,10 @@ class GenerationJobServiceTests {
         public void publishCourseGenerationJob(UUID jobId) {
             publishedJobIds.add(jobId);
             generationJobTransitionService.markPublished(jobId);
+        }
+
+        void clear() {
+            publishedJobIds.clear();
         }
 
         List<UUID> publishedJobIds() {

@@ -17,6 +17,8 @@ import java.util.UUID;
 @Table(name = "generation_jobs")
 public class GenerationJob {
 
+    private static final int DEFAULT_MAX_ATTEMPTS = 4;
+
     @Id
     private UUID id;
 
@@ -105,7 +107,7 @@ public class GenerationJob {
         this.prompt = prompt;
         this.lessonId = lessonId;
         this.attemptCount = 0;
-        this.maxAttempts = 3;
+        this.maxAttempts = DEFAULT_MAX_ATTEMPTS;
         this.nextRunAt = now;
         this.createdAt = now;
         this.updatedAt = now;
@@ -151,6 +153,7 @@ public class GenerationJob {
         this.nextRunAt = nextRunAt;
         this.lockedAt = null;
         this.lockedBy = null;
+        this.lastPublishedAt = null;
         this.completedAt = null;
         this.updatedAt = now;
     }
