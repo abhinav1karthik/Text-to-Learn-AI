@@ -5,7 +5,6 @@ import com.texttolearn.course.service.CourseService;
 import com.texttolearn.generation.model.GenerationJob;
 import com.texttolearn.generation.model.GenerationJobErrorType;
 import java.util.UUID;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -26,7 +25,6 @@ public class GenerationJobWorker {
         this.courseService = courseService;
     }
 
-    @Async("generationTaskExecutor")
     public void processCourseGenerationJob(UUID jobId) {
         String lockedBy = lockOwner();
         if (!generationJobTransitionService.claim(jobId, lockedBy)) {

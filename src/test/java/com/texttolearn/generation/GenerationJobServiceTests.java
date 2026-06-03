@@ -6,20 +6,26 @@ import com.texttolearn.ai.dto.GeneratedCourseOutline;
 import com.texttolearn.ai.dto.GeneratedLessonContent;
 import com.texttolearn.ai.dto.GeneratedModuleOutline;
 import com.texttolearn.ai.service.CourseAiService;
+import com.texttolearn.course.dto.CourseResponse;
 import com.texttolearn.course.repository.CourseRepository;
+import com.texttolearn.course.service.CourseService;
 import com.texttolearn.generation.dto.GenerationJobResponse;
 import com.texttolearn.generation.model.GenerationJob;
 import com.texttolearn.generation.model.GenerationJobErrorType;
 import com.texttolearn.generation.model.GenerationJobStatus;
 import com.texttolearn.generation.model.GenerationJobType;
 import com.texttolearn.generation.repository.GenerationJobRepository;
+import com.texttolearn.generation.service.GenerationJobPublisher;
 import com.texttolearn.generation.service.GenerationJobService;
 import com.texttolearn.generation.service.GenerationJobTransitionService;
+import com.texttolearn.generation.service.GenerationJobWorker;
 import com.texttolearn.user.model.AppUser;
 import com.texttolearn.user.repository.AppUserRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -45,8 +51,17 @@ class GenerationJobServiceTests {
     @Autowired
     private GenerationJobTransitionService generationJobTransitionService;
 
+    @Autowired
+    private GenerationJobWorker generationJobWorker;
+
+    @Autowired
+    private CourseService courseService;
+
+    @Autowired
+    private CapturingGenerationJobPublisher generationJobPublisher;
+
     @Test
-    void createsCourseGenerationJobAndCompletesItInBackground() throws InterruptedException {
+    void createsCourseGenerationJobAndPublishesRabbitMessageAfterCommit() {
         AppUser user = appUserRepository.save(
                 new AppUser("auth0|generation-job-user", "job@example.com", "Job Student", null)
         );
@@ -59,13 +74,78 @@ class GenerationJobServiceTests {
         assertThat(queuedJob.id()).isNotNull();
         assertThat(queuedJob.status()).isEqualTo(GenerationJobStatus.QUEUED);
         assertThat(queuedJob.courseId()).isNull();
+        assertThat(generationJobPublisher.publishedJobIds()).contains(queuedJob.id());
 
-        GenerationJobResponse completedJob = waitForTerminalJob(user, queuedJob);
+        GenerationJob persistedJob = generationJobRepository.findById(queuedJob.id()).orElseThrow();
+        assertThat(persistedJob.getStatus()).isEqualTo(GenerationJobStatus.QUEUED);
+        assertThat(persistedJob.getLastPublishedAt()).isNotNull();
+    }
 
+    @Test
+    void courseWorkerConsumesPublishedJobAndMarksItSucceeded() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|course-worker-user", "course-worker@example.com", "Worker Student", null)
+        );
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Segment Trees and Their Applications"
+        );
+
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+
+        GenerationJobResponse completedJob = generationJobService.getJobForUser(user, queuedJob.id());
         assertThat(completedJob.status()).isEqualTo(GenerationJobStatus.SUCCEEDED);
         assertThat(completedJob.courseId()).isNotNull();
         assertThat(completedJob.completedAt()).isNotNull();
+        assertThat(completedJob.attemptCount()).isEqualTo(1);
         assertThat(courseRepository.findByIdAndUser(completedJob.courseId(), user)).isPresent();
+    }
+
+    @Test
+    void duplicateCourseMessageDoesNotCreateDuplicateCourse() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|duplicate-message-user", "duplicate@example.com", "Duplicate Student", null)
+        );
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Duplicate Course Message"
+        );
+
+        long before = courseRepository.count();
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+        GenerationJobResponse firstResult = generationJobService.getJobForUser(user, queuedJob.id());
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+        GenerationJobResponse secondResult = generationJobService.getJobForUser(user, queuedJob.id());
+
+        assertThat(firstResult.status()).isEqualTo(GenerationJobStatus.SUCCEEDED);
+        assertThat(secondResult.status()).isEqualTo(GenerationJobStatus.SUCCEEDED);
+        assertThat(secondResult.courseId()).isEqualTo(firstResult.courseId());
+        assertThat(secondResult.attemptCount()).isEqualTo(1);
+        assertThat(courseRepository.count()).isEqualTo(before + 1);
+    }
+
+    @Test
+    void queuedJobWithExistingCourseReusesCourseWhenMessageIsRedelivered() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|existing-course-user", "existing-course@example.com", "Existing Student", null)
+        );
+        GenerationJob job = generationJobRepository.saveAndFlush(
+                new GenerationJob(user, GenerationJobType.COURSE_OUTLINE, "Existing course retry")
+        );
+        CourseResponse existingCourse = courseService.createCourseForGenerationJob(
+                user,
+                job.getPrompt(),
+                job.getId()
+        );
+        long courseCount = courseRepository.count();
+
+        generationJobWorker.processCourseGenerationJob(job.getId());
+
+        GenerationJob completedJob = generationJobRepository.findById(job.getId()).orElseThrow();
+        assertThat(completedJob.getStatus()).isEqualTo(GenerationJobStatus.SUCCEEDED);
+        assertThat(completedJob.getCourseId()).isEqualTo(existingCourse.id());
+        assertThat(completedJob.getAttemptCount()).isEqualTo(1);
+        assertThat(courseRepository.count()).isEqualTo(courseCount);
     }
 
     @Test
@@ -130,25 +210,16 @@ class GenerationJobServiceTests {
         assertThat(generationJobTransitionService.claim(job.getId(), "worker-b")).isFalse();
     }
 
-    private GenerationJobResponse waitForTerminalJob(
-            AppUser user,
-            GenerationJobResponse initialJob
-    ) throws InterruptedException {
-        GenerationJobResponse currentJob = initialJob;
-        for (int attempt = 0; attempt < 30; attempt++) {
-            currentJob = generationJobService.getJobForUser(user, initialJob.id());
-            if (currentJob.status() == GenerationJobStatus.SUCCEEDED
-                    || currentJob.status() == GenerationJobStatus.FAILED) {
-                return currentJob;
-            }
-            Thread.sleep(100);
-        }
-
-        return currentJob;
-    }
-
     @TestConfiguration
     static class FakeAiConfig {
+
+        @Bean
+        @Primary
+        CapturingGenerationJobPublisher capturingGenerationJobPublisher(
+                GenerationJobTransitionService generationJobTransitionService
+        ) {
+            return new CapturingGenerationJobPublisher(generationJobTransitionService);
+        }
 
         @Bean
         @Primary
@@ -181,6 +252,26 @@ class GenerationJobServiceTests {
                     );
                 }
             };
+        }
+    }
+
+    static class CapturingGenerationJobPublisher implements GenerationJobPublisher {
+
+        private final GenerationJobTransitionService generationJobTransitionService;
+        private final List<UUID> publishedJobIds = new CopyOnWriteArrayList<>();
+
+        CapturingGenerationJobPublisher(GenerationJobTransitionService generationJobTransitionService) {
+            this.generationJobTransitionService = generationJobTransitionService;
+        }
+
+        @Override
+        public void publishCourseGenerationJob(UUID jobId) {
+            publishedJobIds.add(jobId);
+            generationJobTransitionService.markPublished(jobId);
+        }
+
+        List<UUID> publishedJobIds() {
+            return publishedJobIds;
         }
     }
 }

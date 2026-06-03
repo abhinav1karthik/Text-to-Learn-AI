@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -27,6 +28,17 @@ public class GenerationJobTransitionService {
     public Optional<GenerationJob> getClaimedJobWithUser(UUID jobId, String lockedBy) {
         return generationJobRepository.findByIdWithUserAndLockedBy(jobId, lockedBy)
                 .filter(job -> job.isRunningLockedBy(lockedBy));
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean markPublished(UUID jobId) {
+        return generationJobRepository.findById(jobId)
+                .map(job -> {
+                    job.markPublished();
+                    generationJobRepository.saveAndFlush(job);
+                    return true;
+                })
+                .orElse(false);
     }
 
     @Transactional

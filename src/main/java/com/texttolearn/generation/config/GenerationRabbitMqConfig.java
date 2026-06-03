@@ -13,6 +13,8 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.annotation.EnableRabbit;
+import org.springframework.amqp.support.converter.JacksonJsonMessageConverter;
+import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -87,8 +89,17 @@ public class GenerationRabbitMqConfig {
     }
 
     @Bean
-    RabbitTemplate generationRabbitTemplate(ConnectionFactory connectionFactory) {
+    MessageConverter generationMessageConverter() {
+        return new JacksonJsonMessageConverter();
+    }
+
+    @Bean
+    RabbitTemplate generationRabbitTemplate(
+            ConnectionFactory connectionFactory,
+            MessageConverter generationMessageConverter
+    ) {
         RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
+        rabbitTemplate.setMessageConverter(generationMessageConverter);
         rabbitTemplate.setBeforePublishPostProcessors(message -> {
             message.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
             return message;
@@ -97,9 +108,13 @@ public class GenerationRabbitMqConfig {
     }
 
     @Bean
-    SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(ConnectionFactory connectionFactory) {
+    SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter generationMessageConverter
+    ) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
+        factory.setMessageConverter(generationMessageConverter);
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setDefaultRequeueRejected(false);
         factory.setPrefetchCount(1);

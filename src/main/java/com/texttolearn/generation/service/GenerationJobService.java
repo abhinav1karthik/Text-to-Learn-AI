@@ -24,14 +24,14 @@ public class GenerationJobService {
     );
 
     private final GenerationJobRepository generationJobRepository;
-    private final GenerationJobWorker generationJobWorker;
+    private final GenerationJobPublisher generationJobPublisher;
 
     public GenerationJobService(
             GenerationJobRepository generationJobRepository,
-            GenerationJobWorker generationJobWorker
+            GenerationJobPublisher generationJobPublisher
     ) {
         this.generationJobRepository = generationJobRepository;
-        this.generationJobWorker = generationJobWorker;
+        this.generationJobPublisher = generationJobPublisher;
     }
 
     @Transactional
@@ -55,7 +55,7 @@ public class GenerationJobService {
                 null
         );
         GenerationJob savedJob = generationJobRepository.saveAndFlush(job);
-        scheduleAfterCommit(savedJob.getId());
+        publishAfterCommit(savedJob.getId());
         return toResponse(savedJob);
     }
 
@@ -100,16 +100,16 @@ public class GenerationJobService {
         return toResponse(job);
     }
 
-    private void scheduleAfterCommit(UUID jobId) {
+    private void publishAfterCommit(UUID jobId) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            generationJobWorker.processCourseGenerationJob(jobId);
+            generationJobPublisher.publishCourseGenerationJob(jobId);
             return;
         }
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                generationJobWorker.processCourseGenerationJob(jobId);
+                generationJobPublisher.publishCourseGenerationJob(jobId);
             }
         });
     }
