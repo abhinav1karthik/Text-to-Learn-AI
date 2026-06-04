@@ -2,6 +2,8 @@ package com.texttolearn.generation.service;
 
 import com.texttolearn.generation.model.GenerationJob;
 import com.texttolearn.generation.model.GenerationJobErrorType;
+import com.texttolearn.generation.model.GenerationJobStatus;
+import com.texttolearn.generation.model.GenerationJobType;
 import com.texttolearn.generation.repository.GenerationJobRepository;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -86,5 +88,30 @@ public class GenerationJobTransitionService {
                     return true;
                 })
                 .orElse(false);
+    }
+
+    @Transactional
+    public Optional<GenerationJobStatus> recoverStaleRunningJob(
+            UUID jobId,
+            GenerationJobType type,
+            OffsetDateTime staleLockedBefore,
+            String errorMessage,
+            GenerationJobErrorType errorType,
+            OffsetDateTime nextRunAt
+    ) {
+        return generationJobRepository.findById(jobId)
+                .filter(job -> job.getType() == type)
+                .filter(job -> job.getStatus() == GenerationJobStatus.RUNNING)
+                .filter(job -> job.getLockedAt() != null)
+                .filter(job -> !job.getLockedAt().isAfter(staleLockedBefore))
+                .map(job -> {
+                    if (job.getAttemptCount() < job.getMaxAttempts()) {
+                        job.markRetryQueued(errorMessage, errorType, nextRunAt);
+                    } else {
+                        job.markFailed(errorMessage, errorType);
+                    }
+                    generationJobRepository.saveAndFlush(job);
+                    return job.getStatus();
+                });
     }
 }

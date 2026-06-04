@@ -47,19 +47,32 @@ public interface GenerationJobRepository extends JpaRepository<GenerationJob, UU
     );
 
     @Query("""
-            select job.id
+            select job
             from GenerationJob job
-            where job.type = :type
-              and job.status = :status
+            where job.status = :status
               and job.nextRunAt <= :now
               and (job.lastPublishedAt is null or job.lastPublishedAt <= :stalePublishedBefore)
             order by job.nextRunAt asc
             """)
-    List<UUID> findDueQueuedJobIdsForPublishing(
-            @Param("type") GenerationJobType type,
+    List<GenerationJob> findDueQueuedJobsForPublishing(
             @Param("status") GenerationJobStatus status,
             @Param("now") OffsetDateTime now,
             @Param("stalePublishedBefore") OffsetDateTime stalePublishedBefore,
+            Pageable pageable
+    );
+
+    @Query("""
+            select job.id
+            from GenerationJob job
+            where job.type = :type
+              and job.status = :status
+              and job.lockedAt <= :staleLockedBefore
+            order by job.lockedAt asc
+            """)
+    List<UUID> findStaleRunningJobIds(
+            @Param("type") GenerationJobType type,
+            @Param("status") GenerationJobStatus status,
+            @Param("staleLockedBefore") OffsetDateTime staleLockedBefore,
             Pageable pageable
     );
 

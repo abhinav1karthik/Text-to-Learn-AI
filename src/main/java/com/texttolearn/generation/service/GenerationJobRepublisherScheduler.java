@@ -1,11 +1,10 @@
 package com.texttolearn.generation.service;
 
+import com.texttolearn.generation.model.GenerationJob;
 import com.texttolearn.generation.model.GenerationJobStatus;
-import com.texttolearn.generation.model.GenerationJobType;
 import com.texttolearn.generation.repository.GenerationJobRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -33,22 +32,21 @@ public class GenerationJobRepublisherScheduler {
     }
 
     @Scheduled(fixedDelayString = "${app.generation.republisher.fixed-delay-ms:5000}")
-    public void republishDueCourseJobs() {
+    public void republishDueJobs() {
         OffsetDateTime now = OffsetDateTime.now();
         OffsetDateTime stalePublishedBefore = now.minusSeconds(STALE_PUBLISH_SECONDS);
-        List<UUID> dueJobIds = generationJobRepository.findDueQueuedJobIdsForPublishing(
-                GenerationJobType.COURSE_OUTLINE,
+        List<GenerationJob> dueJobs = generationJobRepository.findDueQueuedJobsForPublishing(
                 GenerationJobStatus.QUEUED,
                 now,
                 stalePublishedBefore,
                 PageRequest.of(0, MAX_JOBS_PER_SCAN)
         );
 
-        for (UUID jobId : dueJobIds) {
+        for (GenerationJob job : dueJobs) {
             try {
-                generationJobPublisher.publishCourseGenerationJob(jobId);
+                generationJobPublisher.publishGenerationJob(job.getId(), job.getType(), job.getPriority());
             } catch (RuntimeException exception) {
-                LOGGER.warn("Failed to republish generation job {}", jobId, exception);
+                LOGGER.warn("Failed to republish generation job {}", job.getId(), exception);
             }
         }
     }

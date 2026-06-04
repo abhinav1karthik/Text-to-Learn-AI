@@ -14,10 +14,13 @@ import com.texttolearn.course.service.CourseService;
 import com.texttolearn.generation.dto.GenerationJobResponse;
 import com.texttolearn.generation.model.GenerationJob;
 import com.texttolearn.generation.model.GenerationJobErrorType;
+import com.texttolearn.generation.model.GenerationJobPriority;
 import com.texttolearn.generation.model.GenerationJobStatus;
 import com.texttolearn.generation.model.GenerationJobType;
 import com.texttolearn.generation.repository.GenerationJobRepository;
+import com.texttolearn.generation.service.GenerationJobRecoveryScheduler;
 import com.texttolearn.generation.service.GenerationJobPublisher;
+import com.texttolearn.generation.service.GenerationJobRepublisherScheduler;
 import com.texttolearn.generation.service.GenerationJobService;
 import com.texttolearn.generation.service.GenerationJobTransitionService;
 import com.texttolearn.generation.service.GenerationJobWorker;
@@ -35,6 +38,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest
 class GenerationJobServiceTests {
@@ -56,6 +60,9 @@ class GenerationJobServiceTests {
 
     @Autowired
     private GenerationJobWorker generationJobWorker;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private CourseService courseService;
@@ -295,6 +302,124 @@ class GenerationJobServiceTests {
         assertThat(generationJobTransitionService.claim(job.getId(), "worker-b")).isFalse();
     }
 
+    @Test
+    void republisherPublishesDueQueuedJobWhenInitialPublishWasMissed() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|missed-publish-user", "missed-publish@example.com", "Missed Publish Student", null)
+        );
+        GenerationJob job = generationJobRepository.saveAndFlush(
+                new GenerationJob(user, GenerationJobType.COURSE_OUTLINE, "Missed publish course")
+        );
+        generationJobPublisher.clear();
+
+        republisherScheduler().republishDueJobs();
+
+        assertThat(generationJobPublisher.publishedJobIds()).contains(job.getId());
+        GenerationJob republishedJob = generationJobRepository.findById(job.getId()).orElseThrow();
+        assertThat(republishedJob.getLastPublishedAt()).isNotNull();
+    }
+
+    @Test
+    void republisherSkipsRecentlyPublishedQueuedJobToAvoidSpam() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|recent-publish-user", "recent-publish@example.com", "Recent Publish Student", null)
+        );
+        GenerationJob job = generationJobRepository.saveAndFlush(
+                new GenerationJob(user, GenerationJobType.COURSE_OUTLINE, "Recently published course")
+        );
+        generationJobTransitionService.markPublished(job.getId());
+        generationJobPublisher.clear();
+
+        republisherScheduler().republishDueJobs();
+
+        assertThat(generationJobPublisher.publishedJobIds()).doesNotContain(job.getId());
+    }
+
+    @Test
+    void recoveryRequeuesStaleRunningCourseJobWhenAttemptsRemain() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|stale-course-user", "stale-course@example.com", "Stale Course Student", null)
+        );
+        GenerationJob job = generationJobRepository.saveAndFlush(
+                new GenerationJob(user, GenerationJobType.COURSE_OUTLINE, "Stale course job")
+        );
+        generationJobTransitionService.claim(job.getId(), "crashed-worker");
+        makeRunningJobStale(job.getId(), OffsetDateTime.now().minusMinutes(21), 1);
+
+        recoveryScheduler().recoverStaleRunningJobs();
+
+        GenerationJob recoveredJob = generationJobRepository.findById(job.getId()).orElseThrow();
+        assertThat(recoveredJob.getStatus()).isEqualTo(GenerationJobStatus.QUEUED);
+        assertThat(recoveredJob.getLastErrorType()).isEqualTo(GenerationJobErrorType.UNKNOWN);
+        assertThat(recoveredJob.getErrorMessage()).contains("COURSE_OUTLINE job recovered");
+        assertThat(recoveredJob.getAttemptCount()).isEqualTo(1);
+        assertThat(recoveredJob.getLockedBy()).isNull();
+        assertThat(recoveredJob.getLockedAt()).isNull();
+        assertThat(recoveredJob.getLastPublishedAt()).isNull();
+    }
+
+    @Test
+    void recoveryFailsStaleRunningCourseJobWhenAttemptsAreExhausted() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|exhausted-course-user", "exhausted-course@example.com", "Exhausted Course Student", null)
+        );
+        GenerationJob job = generationJobRepository.saveAndFlush(
+                new GenerationJob(user, GenerationJobType.COURSE_OUTLINE, "Exhausted stale course job")
+        );
+        generationJobTransitionService.claim(job.getId(), "crashed-worker");
+        makeRunningJobStale(job.getId(), OffsetDateTime.now().minusMinutes(21), 4);
+
+        recoveryScheduler().recoverStaleRunningJobs();
+
+        GenerationJob failedJob = generationJobRepository.findById(job.getId()).orElseThrow();
+        assertThat(failedJob.getStatus()).isEqualTo(GenerationJobStatus.FAILED);
+        assertThat(failedJob.getLastErrorType()).isEqualTo(GenerationJobErrorType.UNKNOWN);
+        assertThat(failedJob.getErrorMessage()).contains("COURSE_OUTLINE job recovered");
+        assertThat(failedJob.getLockedBy()).isNull();
+        assertThat(failedJob.getLockedAt()).isNull();
+        assertThat(failedJob.getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void recoveryUsesShorterTimeoutForLessonJobs() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|stale-lesson-user", "stale-lesson@example.com", "Stale Lesson Student", null)
+        );
+        GenerationJob job = generationJobRepository.saveAndFlush(new GenerationJob(
+                user,
+                GenerationJobType.LESSON_CONTENT,
+                GenerationJobPriority.HIGH,
+                "Stale lesson job",
+                null
+        ));
+        generationJobTransitionService.claim(job.getId(), "crashed-worker");
+        makeRunningJobStale(job.getId(), OffsetDateTime.now().minusMinutes(11), 1);
+
+        recoveryScheduler().recoverStaleRunningJobs();
+
+        GenerationJob recoveredJob = generationJobRepository.findById(job.getId()).orElseThrow();
+        assertThat(recoveredJob.getStatus()).isEqualTo(GenerationJobStatus.QUEUED);
+        assertThat(recoveredJob.getErrorMessage()).contains("LESSON_CONTENT job recovered");
+    }
+
+    private GenerationJobRepublisherScheduler republisherScheduler() {
+        return new GenerationJobRepublisherScheduler(generationJobRepository, generationJobPublisher);
+    }
+
+    private GenerationJobRecoveryScheduler recoveryScheduler() {
+        return new GenerationJobRecoveryScheduler(generationJobRepository, generationJobTransitionService);
+    }
+
+    private void makeRunningJobStale(UUID jobId, OffsetDateTime lockedAt, int attemptCount) {
+        jdbcTemplate.update(
+                "update generation_jobs set locked_at = ?, attempt_count = ?, updated_at = ? where id = ?",
+                lockedAt,
+                attemptCount,
+                lockedAt,
+                jobId
+        );
+    }
+
     @TestConfiguration
     static class FakeAiConfig {
 
@@ -367,9 +492,14 @@ class GenerationJobServiceTests {
         }
 
         @Override
-        public void publishCourseGenerationJob(UUID jobId) {
+        public void publishGenerationJob(UUID jobId, GenerationJobType type, GenerationJobPriority priority) {
             publishedJobIds.add(jobId);
             generationJobTransitionService.markPublished(jobId);
+        }
+
+        @Override
+        public void publishCourseGenerationJob(UUID jobId) {
+            publishGenerationJob(jobId, GenerationJobType.COURSE_OUTLINE, GenerationJobPriority.NORMAL);
         }
 
         void clear() {
