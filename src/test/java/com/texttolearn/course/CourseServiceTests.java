@@ -15,6 +15,7 @@ import com.texttolearn.course.model.Lesson;
 import com.texttolearn.course.model.LessonStatus;
 import com.texttolearn.course.repository.CourseRepository;
 import com.texttolearn.course.service.CourseService;
+import com.texttolearn.generation.model.GenerationJobStatus;
 import com.texttolearn.user.model.AppUser;
 import com.texttolearn.user.repository.AppUserRepository;
 import com.texttolearn.video.config.YouTubeProperties;
@@ -23,6 +24,7 @@ import com.texttolearn.video.dto.YouTubeVideoSearchResponse;
 import com.texttolearn.video.service.YouTubeVideoService;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,14 +67,33 @@ class CourseServiceTests {
 
     @Test
     @Transactional
-    void generatesLessonContentLazilyAndCachesIt() {
+    void queuesLessonGenerationWithoutBlockingLessonGet() {
         AppUser user = appUserRepository.save(
                 new AppUser("auth0|lesson-service-user", "lesson@example.com", "Lesson Student", null)
         );
         CourseResponse course = courseService.createCourse(user, "Segment Trees and Its Applications");
 
-        LessonResponse generatedLesson = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 0);
-        LessonResponse cachedLesson = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 0);
+        LessonResponse preparingLesson = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 0);
+
+        assertThat(preparingLesson.title()).isEqualTo("What is a Segment Tree?");
+        assertThat(preparingLesson.status()).isEqualTo(LessonStatus.PLANNED);
+        assertThat(preparingLesson.objectives()).isEmpty();
+        assertThat(preparingLesson.content()).isEmpty();
+        assertThat(preparingLesson.generationJobId()).isNotNull();
+        assertThat(preparingLesson.generationJobStatus()).isEqualTo(GenerationJobStatus.QUEUED);
+    }
+
+    @Test
+    @Transactional
+    void lessonWorkerGeneratesLessonContentAndCachesIt() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|lesson-worker-service-user", "lesson-worker@example.com", "Lesson Worker", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Segment Trees and Its Applications");
+        UUID lessonId = course.modules().getFirst().lessons().getFirst().id();
+
+        LessonResponse generatedLesson = courseService.generateLessonForGenerationJob(user, lessonId);
+        LessonResponse cachedLesson = courseService.generateLessonForGenerationJob(user, lessonId);
 
         assertThat(generatedLesson.title()).isEqualTo("What is a Segment Tree?");
         assertThat(generatedLesson.status()).isEqualTo(LessonStatus.GENERATED);
@@ -117,8 +138,9 @@ class CourseServiceTests {
                 new AppUser("auth0|video-flow-user", "video-flow@example.com", "Video Flow Student", null)
         );
         CourseResponse course = courseService.createCourse(user, "Segment Trees and Its Applications");
+        UUID lessonId = course.modules().getFirst().lessons().get(1).id();
 
-        LessonResponse response = courseService.getOrGenerateLessonForUser(user, course.id(), 0, 1);
+        LessonResponse response = courseService.generateLessonForGenerationJob(user, lessonId);
 
         assertThat(response.content()).extracting(block -> block.get("type"))
                 .containsExactly("heading", "paragraph", "video", "paragraph", "video", "mcq", "mcq");

@@ -98,7 +98,7 @@ public class CourseController {
             @RequestParam(required = false) String voiceName
     ) {
         AppUser user = currentUser(jwt);
-        LessonResponse lesson = courseService.getOrGenerateLessonForUser(user, courseId, moduleIndex, lessonIndex);
+        LessonResponse lesson = courseService.getGeneratedLessonForUser(user, courseId, moduleIndex, lessonIndex);
         LessonAudioResponse audio = lessonAudioService.generateAudio(lesson, voiceName, language);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(audio.contentType()))
@@ -115,7 +115,7 @@ public class CourseController {
             @PathVariable int lessonIndex
     ) {
         AppUser user = currentUser(jwt);
-        LessonResponse lesson = courseService.getOrGenerateLessonForUser(user, courseId, moduleIndex, lessonIndex);
+        LessonResponse lesson = courseService.getGeneratedLessonForUser(user, courseId, moduleIndex, lessonIndex);
         LessonPdfResponse pdf = lessonPdfService.generateLessonPdf(lesson);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(pdf.contentType()))

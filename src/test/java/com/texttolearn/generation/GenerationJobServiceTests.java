@@ -168,6 +168,95 @@ class GenerationJobServiceTests {
     }
 
     @Test
+    void createsLessonGenerationJobAndPublishesByPriority() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|lesson-job-user", "lesson-job@example.com", "Lesson Job Student", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Lesson job course");
+        UUID lessonId = course.modules().getFirst().lessons().getFirst().id();
+        generationJobPublisher.clear();
+
+        GenerationJobResponse queuedJob = generationJobService.createLessonGenerationJob(
+                user,
+                lessonId,
+                "What is a Segment Tree?",
+                GenerationJobPriority.HIGH
+        );
+
+        assertThat(queuedJob.type()).isEqualTo(GenerationJobType.LESSON_CONTENT);
+        assertThat(queuedJob.status()).isEqualTo(GenerationJobStatus.QUEUED);
+        assertThat(queuedJob.priority()).isEqualTo(GenerationJobPriority.HIGH);
+        assertThat(queuedJob.lessonId()).isEqualTo(lessonId);
+        assertThat(generationJobPublisher.publishedJobs())
+                .contains(new PublishedJob(queuedJob.id(), GenerationJobType.LESSON_CONTENT, GenerationJobPriority.HIGH));
+    }
+
+    @Test
+    void reusesActiveLessonJobAndPromotesQueuedLowPriorityJob() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|lesson-promotion-user", "lesson-promotion@example.com", "Lesson Promotion Student", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Lesson promotion course");
+        UUID lessonId = course.modules().getFirst().lessons().getFirst().id();
+        GenerationJobResponse lowPriorityJob = generationJobService.createLessonGenerationJob(
+                user,
+                lessonId,
+                "What is a Segment Tree?",
+                GenerationJobPriority.LOW
+        );
+        generationJobPublisher.clear();
+
+        GenerationJobResponse promotedJob = generationJobService.createLessonGenerationJob(
+                user,
+                lessonId,
+                "What is a Segment Tree?",
+                GenerationJobPriority.HIGH
+        );
+
+        assertThat(promotedJob.id()).isEqualTo(lowPriorityJob.id());
+        assertThat(promotedJob.priority()).isEqualTo(GenerationJobPriority.HIGH);
+        assertThat(generationJobPublisher.publishedJobs())
+                .contains(new PublishedJob(promotedJob.id(), GenerationJobType.LESSON_CONTENT, GenerationJobPriority.HIGH));
+        assertThat(generationJobRepository
+                .findFirstByLessonIdAndTypeAndStatusInOrderByCreatedAtDesc(
+                        lessonId,
+                        GenerationJobType.LESSON_CONTENT,
+                        List.of(GenerationJobStatus.QUEUED, GenerationJobStatus.RUNNING)
+                ))
+                .get()
+                .extracting(GenerationJob::getPriority)
+                .isEqualTo(GenerationJobPriority.HIGH);
+    }
+
+    @Test
+    void lessonWorkerGeneratesLessonContentAndMarksJobSucceeded() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|lesson-worker-user", "lesson-worker@example.com", "Lesson Worker Student", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Lesson worker course");
+        UUID lessonId = course.modules().getFirst().lessons().getFirst().id();
+        GenerationJobResponse queuedJob = generationJobService.createLessonGenerationJob(
+                user,
+                lessonId,
+                "What is a Segment Tree?",
+                GenerationJobPriority.HIGH
+        );
+
+        generationJobWorker.processLessonGenerationJob(queuedJob.id());
+
+        GenerationJobResponse completedJob = generationJobService.getJobForUser(user, queuedJob.id());
+        assertThat(completedJob.status()).isEqualTo(GenerationJobStatus.SUCCEEDED);
+        assertThat(completedJob.courseId()).isEqualTo(course.id());
+        assertThat(completedJob.lessonId()).isEqualTo(lessonId);
+        assertThat(completedJob.completedAt()).isNotNull();
+        assertThat(completedJob.attemptCount()).isEqualTo(1);
+        assertThat(courseService.getGeneratedLessonForUser(user, course.id(), 0, 0).content())
+                .first()
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("text", "Generated lesson content.");
+    }
+
+    @Test
     void retryableRateLimitFailureIsRequeuedWithBackoff() {
         AppUser user = appUserRepository.save(
                 new AppUser("auth0|rate-limit-user", "rate-limit@example.com", "Rate Limit Student", null)
@@ -482,10 +571,13 @@ class GenerationJobServiceTests {
         }
     }
 
+    record PublishedJob(UUID id, GenerationJobType type, GenerationJobPriority priority) {
+    }
+
     static class CapturingGenerationJobPublisher implements GenerationJobPublisher {
 
         private final GenerationJobTransitionService generationJobTransitionService;
-        private final List<UUID> publishedJobIds = new CopyOnWriteArrayList<>();
+        private final List<PublishedJob> publishedJobs = new CopyOnWriteArrayList<>();
 
         CapturingGenerationJobPublisher(GenerationJobTransitionService generationJobTransitionService) {
             this.generationJobTransitionService = generationJobTransitionService;
@@ -493,7 +585,7 @@ class GenerationJobServiceTests {
 
         @Override
         public void publishGenerationJob(UUID jobId, GenerationJobType type, GenerationJobPriority priority) {
-            publishedJobIds.add(jobId);
+            publishedJobs.add(new PublishedJob(jobId, type, priority));
             generationJobTransitionService.markPublished(jobId);
         }
 
@@ -503,11 +595,15 @@ class GenerationJobServiceTests {
         }
 
         void clear() {
-            publishedJobIds.clear();
+            publishedJobs.clear();
         }
 
         List<UUID> publishedJobIds() {
-            return publishedJobIds;
+            return publishedJobs.stream().map(PublishedJob::id).toList();
+        }
+
+        List<PublishedJob> publishedJobs() {
+            return publishedJobs;
         }
     }
 }

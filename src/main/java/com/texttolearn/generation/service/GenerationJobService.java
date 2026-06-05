@@ -55,7 +55,7 @@ public class GenerationJobService {
                 null
         );
         GenerationJob savedJob = generationJobRepository.saveAndFlush(job);
-        publishAfterCommit(savedJob.getId());
+        publishAfterCommit(savedJob.getId(), savedJob.getType(), savedJob.getPriority());
         return toResponse(savedJob);
     }
 
@@ -72,8 +72,18 @@ public class GenerationJobService {
                         GenerationJobType.LESSON_CONTENT,
                         ACTIVE_JOB_STATUSES
                 )
-                .map(this::toResponse)
+                .map(job -> reuseLessonGenerationJob(job, priority))
                 .orElseGet(() -> createNewLessonGenerationJob(user, lessonId, lessonTitle, priority));
+    }
+
+    private GenerationJobResponse reuseLessonGenerationJob(GenerationJob job, GenerationJobPriority requestedPriority) {
+        if (requestedPriority == GenerationJobPriority.HIGH && job.promoteToHighPriority()) {
+            GenerationJob promotedJob = generationJobRepository.saveAndFlush(job);
+            publishAfterCommit(promotedJob.getId(), promotedJob.getType(), promotedJob.getPriority());
+            return toResponse(promotedJob);
+        }
+
+        return toResponse(job);
     }
 
     private GenerationJobResponse createNewLessonGenerationJob(
@@ -90,6 +100,7 @@ public class GenerationJobService {
                 lessonId
         );
         GenerationJob savedJob = generationJobRepository.saveAndFlush(job);
+        publishAfterCommit(savedJob.getId(), savedJob.getType(), savedJob.getPriority());
         return toResponse(savedJob);
     }
 
@@ -100,16 +111,16 @@ public class GenerationJobService {
         return toResponse(job);
     }
 
-    private void publishAfterCommit(UUID jobId) {
+    private void publishAfterCommit(UUID jobId, GenerationJobType type, GenerationJobPriority priority) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            generationJobPublisher.publishCourseGenerationJob(jobId);
+            generationJobPublisher.publishGenerationJob(jobId, type, priority);
             return;
         }
 
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                generationJobPublisher.publishCourseGenerationJob(jobId);
+                generationJobPublisher.publishGenerationJob(jobId, type, priority);
             }
         });
     }

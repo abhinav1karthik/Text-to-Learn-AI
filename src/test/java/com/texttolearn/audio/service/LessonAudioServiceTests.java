@@ -203,7 +203,10 @@ class LessonAudioServiceTests {
                 UUID.randomUUID(),
                 "Range Queries",
                 UUID.randomUUID(),
-                "Segment Trees"
+                "Segment Trees",
+                null,
+                null,
+                null
         );
     }
 

@@ -18,10 +18,14 @@ import com.texttolearn.course.model.CourseModule;
 import com.texttolearn.course.model.Lesson;
 import com.texttolearn.course.model.LessonStatus;
 import com.texttolearn.course.repository.CourseRepository;
+import com.texttolearn.course.repository.LessonRepository;
+import com.texttolearn.generation.dto.GenerationJobResponse;
+import com.texttolearn.generation.model.GenerationJobPriority;
 import com.texttolearn.user.model.AppUser;
 import com.texttolearn.video.dto.YouTubeVideoResponse;
 import com.texttolearn.video.dto.YouTubeVideoSearchResponse;
 import com.texttolearn.video.service.YouTubeVideoService;
+import com.texttolearn.generation.service.GenerationJobService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,21 +46,27 @@ public class CourseService {
     private final CourseAiService courseAiService;
     private final ObjectMapper objectMapper;
     private final CourseRepository courseRepository;
+    private final LessonRepository lessonRepository;
     private final YouTubeVideoService youTubeVideoService;
     private final TransactionTemplate transactionTemplate;
+    private final GenerationJobService generationJobService;
 
     public CourseService(
             CourseAiService courseAiService,
             ObjectMapper objectMapper,
             CourseRepository courseRepository,
+            LessonRepository lessonRepository,
             YouTubeVideoService youTubeVideoService,
-            TransactionTemplate transactionTemplate
+            TransactionTemplate transactionTemplate,
+            GenerationJobService generationJobService
     ) {
         this.courseAiService = courseAiService;
         this.objectMapper = objectMapper;
         this.courseRepository = courseRepository;
+        this.lessonRepository = lessonRepository;
         this.youTubeVideoService = youTubeVideoService;
         this.transactionTemplate = transactionTemplate;
+        this.generationJobService = generationJobService;
     }
 
     @Transactional(readOnly = true)
@@ -153,17 +163,13 @@ public class CourseService {
         Lesson lesson = findLessonByIndex(module, lessonIndex);
 
         if (needsGeneration(lesson)) {
-            GeneratedLessonContent generatedLesson = courseAiService.generateLessonContent(
-                    course.getTitle(),
-                    module.getTitle(),
-                    lesson.getTitle()
+            GenerationJobResponse job = generationJobService.createLessonGenerationJob(
+                    user,
+                    lesson.getId(),
+                    lesson.getTitle(),
+                    GenerationJobPriority.HIGH
             );
-            List<Map<String, Object>> normalizedContent = validateLessonContent(generatedLesson);
-            List<Map<String, Object>> enrichedContent = enrichVideoBlocks(normalizedContent);
-            lesson.replaceGeneratedContent(
-                    writeObjectivesJson(generatedLesson.objectives()),
-                    writeContentJson(enrichedContent)
-            );
+            return toLessonResponse(course, module, lesson, job);
         } else if (needsVideoEnrichment(lesson)) {
             List<Map<String, Object>> existingContent = readContent(lesson.getContentJson());
             List<Map<String, Object>> enrichedContent = enrichVideoBlocks(existingContent);
@@ -176,6 +182,68 @@ public class CourseService {
         }
 
         return toLessonResponse(course, module, lesson);
+    }
+
+    @Transactional(readOnly = true)
+    public LessonResponse getGeneratedLessonForUser(AppUser user, UUID courseId, int moduleIndex, int lessonIndex) {
+        if (moduleIndex < 0 || lessonIndex < 0) {
+            throw new ResourceNotFoundException("Lesson not found");
+        }
+
+        Course course = courseRepository.findByIdAndUser(courseId, user)
+                .orElseThrow(() -> new ResourceNotFoundException("Course not found"));
+        CourseModule module = findModuleByIndex(course, moduleIndex);
+        Lesson lesson = findLessonByIndex(module, lessonIndex);
+        if (needsGeneration(lesson)) {
+            throw new IllegalArgumentException("Lesson content is not ready yet.");
+        }
+
+        return toLessonResponse(course, module, lesson);
+    }
+
+    public LessonResponse generateLessonForGenerationJob(AppUser user, UUID lessonId) {
+        LessonGenerationContext context = transactionTemplate.execute(status -> {
+            Lesson lesson = lessonRepository.findByIdAndCourseUser(lessonId, user)
+                    .orElseThrow(() -> new ResourceNotFoundException("Lesson not found"));
+            CourseModule module = lesson.getModule();
+            Course course = module.getCourse();
+            return new LessonGenerationContext(
+                    course.getId(),
+                    course.getTitle(),
+                    module.getTitle(),
+                    lesson.getTitle(),
+                    !needsGeneration(lesson)
+            );
+        });
+
+        if (context.alreadyGenerated()) {
+            return transactionTemplate.execute(status -> {
+                Lesson lesson = lessonRepository.findByIdAndCourseUser(lessonId, user)
+                        .orElseThrow(() -> new ResourceNotFoundException("Lesson not found"));
+                return toLessonResponse(lesson.getModule().getCourse(), lesson.getModule(), lesson);
+            });
+        }
+
+        GeneratedLessonContent generatedLesson = courseAiService.generateLessonContent(
+                context.courseTitle(),
+                context.moduleTitle(),
+                context.lessonTitle()
+        );
+        List<Map<String, Object>> normalizedContent = validateLessonContent(generatedLesson);
+        List<Map<String, Object>> enrichedContent = enrichVideoBlocks(normalizedContent);
+        String objectivesJson = writeObjectivesJson(generatedLesson.objectives());
+        String contentJson = writeContentJson(enrichedContent);
+
+        return transactionTemplate.execute(status -> {
+            Lesson lesson = lessonRepository.findByIdAndCourseUser(lessonId, user)
+                    .orElseThrow(() -> new ResourceNotFoundException("Lesson not found"));
+            CourseModule module = lesson.getModule();
+            Course course = module.getCourse();
+            if (needsGeneration(lesson)) {
+                lesson.replaceGeneratedContent(objectivesJson, contentJson);
+            }
+            return toLessonResponse(course, module, lesson);
+        });
     }
 
     public CourseResponse toResponse(Course course) {
@@ -210,6 +278,15 @@ public class CourseService {
     }
 
     private LessonResponse toLessonResponse(Course course, CourseModule module, Lesson lesson) {
+        return toLessonResponse(course, module, lesson, null);
+    }
+
+    private LessonResponse toLessonResponse(
+            Course course,
+            CourseModule module,
+            Lesson lesson,
+            GenerationJobResponse generationJob
+    ) {
         return new LessonResponse(
                 lesson.getId(),
                 lesson.getTitle(),
@@ -220,8 +297,20 @@ public class CourseService {
                 module.getId(),
                 module.getTitle(),
                 course.getId(),
-                course.getTitle()
+                course.getTitle(),
+                generationJob == null ? null : generationJob.id(),
+                generationJob == null ? null : generationJob.status(),
+                generationJob == null ? null : generationJob.errorMessage()
         );
+    }
+
+    private record LessonGenerationContext(
+            UUID courseId,
+            String courseTitle,
+            String moduleTitle,
+            String lessonTitle,
+            boolean alreadyGenerated
+    ) {
     }
 
     private CourseModule findModuleByIndex(Course course, int moduleIndex) {

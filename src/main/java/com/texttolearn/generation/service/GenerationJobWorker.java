@@ -1,6 +1,7 @@
 package com.texttolearn.generation.service;
 
 import com.texttolearn.course.dto.CourseResponse;
+import com.texttolearn.course.dto.LessonResponse;
 import com.texttolearn.course.service.CourseService;
 import com.texttolearn.generation.model.GenerationJob;
 import java.time.OffsetDateTime;
@@ -45,6 +46,22 @@ public class GenerationJobWorker {
                         job.getId()
                 );
                 generationJobTransitionService.markSucceeded(jobId, course.id(), lockedBy);
+            } catch (RuntimeException exception) {
+                handleFailure(job, exception, lockedBy);
+            }
+        });
+    }
+
+    public void processLessonGenerationJob(UUID jobId) {
+        String lockedBy = lockOwner();
+        if (!generationJobTransitionService.claim(jobId, lockedBy)) {
+            return;
+        }
+
+        generationJobTransitionService.getClaimedJobWithUser(jobId, lockedBy).ifPresent(job -> {
+            try {
+                LessonResponse lesson = courseService.generateLessonForGenerationJob(job.getUser(), job.getLessonId());
+                generationJobTransitionService.markSucceeded(jobId, lesson.courseId(), lockedBy);
             } catch (RuntimeException exception) {
                 handleFailure(job, exception, lockedBy);
             }

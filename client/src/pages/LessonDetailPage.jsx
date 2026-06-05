@@ -10,6 +10,8 @@ import { useApiClient } from '../hooks/useApiClient.js';
 import { useAppContext } from '../hooks/useAppContext.js';
 import { ROUTES } from '../utils/routes.js';
 
+const LESSON_JOB_POLL_INTERVAL_MS = 2000;
+
 export default function LessonDetailPage() {
   const { courseId, lessonIndex, moduleIndex } = useParams();
   const apiClient = useApiClient();
@@ -18,6 +20,8 @@ export default function LessonDetailPage() {
   const [course, setCourse] = useState(null);
   const [error, setError] = useState('');
   const [isLoading, setLoading] = useState(true);
+  const [activeJobId, setActiveJobId] = useState(null);
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +37,7 @@ export default function LessonDetailPage() {
         const courseResponse = await apiClient(`/api/courses/${courseId}`);
         if (!cancelled) {
           setLesson(lessonResponse);
+          setActiveJobId(lessonResponse.generationJobId ?? null);
           setCourse(
             withUpdatedLessonStatus(
               courseResponse,
@@ -58,7 +63,51 @@ export default function LessonDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [apiClient, courseId, lessonIndex, moduleIndex]);
+  }, [apiClient, courseId, lessonIndex, moduleIndex, reloadCount]);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timeoutId;
+
+    async function pollLessonJob() {
+      try {
+        const job = await apiClient(`/api/generation-jobs/${activeJobId}`);
+        if (cancelled) {
+          return;
+        }
+
+        if (job.status === 'SUCCEEDED') {
+          setActiveJobId(null);
+          setReloadCount((current) => current + 1);
+          return;
+        }
+
+        if (job.status === 'FAILED') {
+          setActiveJobId(null);
+          setError(job.errorMessage || 'Lesson generation failed. Please try again.');
+          return;
+        }
+
+        timeoutId = window.setTimeout(pollLessonJob, LESSON_JOB_POLL_INTERVAL_MS);
+      } catch (requestError) {
+        if (!cancelled) {
+          setActiveJobId(null);
+          setError(requestError.message);
+        }
+      }
+    }
+
+    pollLessonJob();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeJobId, apiClient]);
 
   useEffect(() => {
     if (!course) {
@@ -98,6 +147,7 @@ export default function LessonDetailPage() {
   const previousLesson = currentIndex > 0 ? flatLessons[currentIndex - 1] : null;
   const nextLesson =
     currentIndex >= 0 && currentIndex < flatLessons.length - 1 ? flatLessons[currentIndex + 1] : null;
+  const lessonIsPreparing = lesson.status !== 'GENERATED';
 
   return (
     <section className="flex max-w-[1040px] flex-col gap-6">
@@ -115,7 +165,17 @@ export default function LessonDetailPage() {
         </p>
       </div>
 
-      {lesson.objectives.length > 0 && (
+      {lessonIsPreparing ? (
+        <section className="rounded-xl border border-blue-100 bg-blue-50 p-6 dark:border-blue-900/70 dark:bg-blue-950/30">
+          <LoadingSpinner label="Preparing lesson content" />
+          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+            The backend has queued this lesson for AI generation. This page will refresh automatically
+            when the lesson is ready.
+          </p>
+        </section>
+      ) : null}
+
+      {!lessonIsPreparing && lesson.objectives.length > 0 && (
         <section className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900" aria-labelledby="lesson-objectives-title">
           <h2 className="text-xl font-semibold text-slate-900 dark:text-white" id="lesson-objectives-title">
             Objectives
@@ -130,21 +190,25 @@ export default function LessonDetailPage() {
         </section>
       )}
 
-      <LessonAudioPlayer
-        courseId={courseId}
-        lessonIndex={lessonIndex}
-        lessonTitle={lesson.title}
-        moduleIndex={moduleIndex}
-      />
+      {!lessonIsPreparing && (
+        <>
+          <LessonAudioPlayer
+            courseId={courseId}
+            lessonIndex={lessonIndex}
+            lessonTitle={lesson.title}
+            moduleIndex={moduleIndex}
+          />
 
-      <LessonRenderer content={lesson.content} />
+          <LessonRenderer content={lesson.content} />
 
-      <LessonPdfDownloadButton
-        courseId={courseId}
-        lessonIndex={lessonIndex}
-        lessonTitle={lesson.title}
-        moduleIndex={moduleIndex}
-      />
+          <LessonPdfDownloadButton
+            courseId={courseId}
+            lessonIndex={lessonIndex}
+            lessonTitle={lesson.title}
+            moduleIndex={moduleIndex}
+          />
+        </>
+      )}
 
       <nav className="grid grid-cols-1 gap-3 sm:grid-cols-2" aria-label="Lesson navigation">
         {previousLesson ? (

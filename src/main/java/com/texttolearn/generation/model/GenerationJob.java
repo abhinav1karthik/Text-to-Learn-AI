@@ -178,6 +178,17 @@ public class GenerationJob {
         this.updatedAt = this.lastPublishedAt;
     }
 
+    public boolean promoteToHighPriority() {
+        if (this.status != GenerationJobStatus.QUEUED || this.priority == GenerationJobPriority.HIGH) {
+            return false;
+        }
+
+        this.priority = GenerationJobPriority.HIGH;
+        this.lastPublishedAt = null;
+        this.updatedAt = OffsetDateTime.now();
+        return true;
+    }
+
     public boolean isRunningLockedBy(String lockedBy) {
         return this.status == GenerationJobStatus.RUNNING
                 && this.lockedBy != null
