@@ -1,6 +1,8 @@
 package com.texttolearn.generation.service;
 
 import com.texttolearn.common.error.ResourceNotFoundException;
+import com.texttolearn.course.model.Lesson;
+import com.texttolearn.course.repository.LessonRepository;
 import com.texttolearn.generation.dto.GenerationJobResponse;
 import com.texttolearn.generation.model.GenerationJob;
 import com.texttolearn.generation.model.GenerationJobPriority;
@@ -8,6 +10,7 @@ import com.texttolearn.generation.model.GenerationJobStatus;
 import com.texttolearn.generation.model.GenerationJobType;
 import com.texttolearn.generation.repository.GenerationJobRepository;
 import com.texttolearn.user.model.AppUser;
+import com.texttolearn.user.repository.AppUserRepository;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -24,26 +27,34 @@ public class GenerationJobService {
     );
 
     private final GenerationJobRepository generationJobRepository;
+    private final AppUserRepository appUserRepository;
+    private final LessonRepository lessonRepository;
     private final GenerationJobPublisher generationJobPublisher;
 
     public GenerationJobService(
             GenerationJobRepository generationJobRepository,
+            AppUserRepository appUserRepository,
+            LessonRepository lessonRepository,
             GenerationJobPublisher generationJobPublisher
     ) {
         this.generationJobRepository = generationJobRepository;
+        this.appUserRepository = appUserRepository;
+        this.lessonRepository = lessonRepository;
         this.generationJobPublisher = generationJobPublisher;
     }
 
     @Transactional
     public GenerationJobResponse createCourseGenerationJob(AppUser user, String topic) {
+        AppUser lockedUser = appUserRepository.findByIdForUpdate(user.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         return generationJobRepository
                 .findFirstByUserAndTypeAndStatusInOrderByCreatedAtDesc(
-                        user,
+                        lockedUser,
                         GenerationJobType.COURSE_OUTLINE,
                         ACTIVE_JOB_STATUSES
                 )
                 .map(this::toResponse)
-                .orElseGet(() -> createNewCourseGenerationJob(user, topic));
+                .orElseGet(() -> createNewCourseGenerationJob(lockedUser, topic));
     }
 
     private GenerationJobResponse createNewCourseGenerationJob(AppUser user, String topic) {
@@ -66,14 +77,17 @@ public class GenerationJobService {
             String lessonTitle,
             GenerationJobPriority priority
     ) {
+        Lesson lockedLesson = lessonRepository.findByIdAndCourseUserForUpdate(lessonId, user)
+                .orElseThrow(() -> new ResourceNotFoundException("Lesson not found"));
         return generationJobRepository
-                .findFirstByLessonIdAndTypeAndStatusInOrderByCreatedAtDesc(
+                .findFirstByLessonIdAndUserAndTypeAndStatusInOrderByCreatedAtDesc(
                         lessonId,
+                        user,
                         GenerationJobType.LESSON_CONTENT,
                         ACTIVE_JOB_STATUSES
                 )
                 .map(job -> reuseLessonGenerationJob(job, priority))
-                .orElseGet(() -> createNewLessonGenerationJob(user, lessonId, lessonTitle, priority));
+                .orElseGet(() -> createNewLessonGenerationJob(user, lessonId, lockedLesson.getTitle(), priority));
     }
 
     private GenerationJobResponse reuseLessonGenerationJob(GenerationJob job, GenerationJobPriority requestedPriority) {

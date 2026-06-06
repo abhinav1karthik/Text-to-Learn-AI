@@ -1,6 +1,7 @@
 package com.texttolearn.generation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.texttolearn.ai.dto.GeneratedCourseOutline;
 import com.texttolearn.ai.dto.GeneratedLessonContent;
@@ -98,6 +99,54 @@ class GenerationJobServiceTests {
         GenerationJob persistedJob = generationJobRepository.findById(queuedJob.id()).orElseThrow();
         assertThat(persistedJob.getStatus()).isEqualTo(GenerationJobStatus.QUEUED);
         assertThat(persistedJob.getLastPublishedAt()).isNotNull();
+    }
+
+    @Test
+    void reusesActiveCourseGenerationJobForDuplicateSubmission() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|duplicate-submit-user", "duplicate-submit@example.com", "Duplicate Submit Student", null)
+        );
+        GenerationJobResponse firstJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Segment Trees"
+        );
+        generationJobPublisher.clear();
+
+        GenerationJobResponse secondJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Segment Trees double click"
+        );
+
+        assertThat(secondJob.id()).isEqualTo(firstJob.id());
+        assertThat(secondJob.prompt()).isEqualTo("Segment Trees");
+        assertThat(generationJobPublisher.publishedJobs()).isEmpty();
+        assertThat(generationJobRepository
+                .findFirstByUserAndTypeAndStatusInOrderByCreatedAtDesc(
+                        user,
+                        GenerationJobType.COURSE_OUTLINE,
+                        List.of(GenerationJobStatus.QUEUED, GenerationJobStatus.RUNNING)
+                ))
+                .get()
+                .extracting(GenerationJob::getId)
+                .isEqualTo(firstJob.id());
+    }
+
+    @Test
+    void doesNotExposeGenerationJobToAnotherUser() {
+        AppUser owner = appUserRepository.save(
+                new AppUser("auth0|job-owner", "job-owner@example.com", "Job Owner", null)
+        );
+        AppUser otherUser = appUserRepository.save(
+                new AppUser("auth0|job-intruder", "job-intruder@example.com", "Job Intruder", null)
+        );
+        GenerationJobResponse ownerJob = generationJobService.createCourseGenerationJob(
+                owner,
+                "Private generated course"
+        );
+
+        assertThatThrownBy(() -> generationJobService.getJobForUser(otherUser, ownerJob.id()))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Generation job not found");
     }
 
     @Test
@@ -248,6 +297,56 @@ class GenerationJobServiceTests {
         assertThat(queuedJob.lessonId()).isEqualTo(lessonId);
         assertThat(generationJobPublisher.publishedJobs())
                 .contains(new PublishedJob(queuedJob.id(), GenerationJobType.LESSON_CONTENT, GenerationJobPriority.HIGH));
+    }
+
+    @Test
+    void doesNotCreateLessonGenerationJobForAnotherUsersLesson() {
+        AppUser owner = appUserRepository.save(
+                new AppUser("auth0|lesson-owner", "lesson-owner@example.com", "Lesson Owner", null)
+        );
+        AppUser otherUser = appUserRepository.save(
+                new AppUser("auth0|lesson-intruder", "lesson-intruder@example.com", "Lesson Intruder", null)
+        );
+        CourseResponse ownerCourse = courseService.createCourse(owner, "Owner course");
+        UUID ownerLessonId = ownerCourse.modules().getFirst().lessons().getFirst().id();
+        long jobCountBefore = generationJobRepository.count();
+
+        assertThatThrownBy(() -> generationJobService.createLessonGenerationJob(
+                otherUser,
+                ownerLessonId,
+                "Spoofed lesson",
+                GenerationJobPriority.HIGH
+        ))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Lesson not found");
+        assertThat(generationJobRepository.count()).isEqualTo(jobCountBefore);
+    }
+
+    @Test
+    void reusesActiveLessonGenerationJobForDuplicateLessonOpen() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|duplicate-lesson-user", "duplicate-lesson@example.com", "Duplicate Lesson Student", null)
+        );
+        CourseResponse course = courseService.createCourse(user, "Duplicate lesson course");
+        UUID lessonId = course.modules().getFirst().lessons().getFirst().id();
+        GenerationJobResponse firstJob = generationJobService.createLessonGenerationJob(
+                user,
+                lessonId,
+                "What is a Segment Tree?",
+                GenerationJobPriority.HIGH
+        );
+        generationJobPublisher.clear();
+
+        GenerationJobResponse secondJob = generationJobService.createLessonGenerationJob(
+                user,
+                lessonId,
+                "Duplicate browser tab",
+                GenerationJobPriority.HIGH
+        );
+
+        assertThat(secondJob.id()).isEqualTo(firstJob.id());
+        assertThat(secondJob.prompt()).isEqualTo("What is a Segment Tree?");
+        assertThat(generationJobPublisher.publishedJobs()).isEmpty();
     }
 
     @Test

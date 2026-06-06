@@ -31,6 +31,13 @@ public interface GenerationJobRepository extends JpaRepository<GenerationJob, UU
             Collection<GenerationJobStatus> statuses
     );
 
+    Optional<GenerationJob> findFirstByLessonIdAndUserAndTypeAndStatusInOrderByCreatedAtDesc(
+            UUID lessonId,
+            AppUser user,
+            GenerationJobType type,
+            Collection<GenerationJobStatus> statuses
+    );
+
     @Query("select job from GenerationJob job join fetch job.user where job.id = :id")
     Optional<GenerationJob> findByIdWithUser(@Param("id") UUID id);
 
