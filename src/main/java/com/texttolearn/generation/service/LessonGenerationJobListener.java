@@ -22,7 +22,7 @@ public class LessonGenerationJobListener {
 
     @RabbitListener(
             queues = GenerationRabbitMqConfig.LESSON_GENERATION_HIGH_QUEUE,
-            containerFactory = "rabbitListenerContainerFactory"
+            containerFactory = "highPriorityLessonRabbitListenerContainerFactory"
     )
     public void handleHighPriorityLessonGenerationJob(
             GenerationJobMessage message,
@@ -34,7 +34,7 @@ public class LessonGenerationJobListener {
 
     @RabbitListener(
             queues = GenerationRabbitMqConfig.LESSON_GENERATION_LOW_QUEUE,
-            containerFactory = "rabbitListenerContainerFactory"
+            containerFactory = "lowPriorityLessonRabbitListenerContainerFactory"
     )
     public void handleLowPriorityLessonGenerationJob(
             GenerationJobMessage message,

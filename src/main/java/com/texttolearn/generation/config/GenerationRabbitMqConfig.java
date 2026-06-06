@@ -112,12 +112,38 @@ public class GenerationRabbitMqConfig {
             ConnectionFactory connectionFactory,
             MessageConverter generationMessageConverter
     ) {
+        return listenerContainerFactory(connectionFactory, generationMessageConverter, 1);
+    }
+
+    @Bean
+    SimpleRabbitListenerContainerFactory highPriorityLessonRabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter generationMessageConverter
+    ) {
+        return listenerContainerFactory(connectionFactory, generationMessageConverter, 2);
+    }
+
+    @Bean
+    SimpleRabbitListenerContainerFactory lowPriorityLessonRabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter generationMessageConverter
+    ) {
+        return listenerContainerFactory(connectionFactory, generationMessageConverter, 1);
+    }
+
+    private SimpleRabbitListenerContainerFactory listenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter generationMessageConverter,
+            int concurrency
+    ) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
         factory.setMessageConverter(generationMessageConverter);
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setDefaultRequeueRejected(false);
         factory.setPrefetchCount(1);
+        factory.setConcurrentConsumers(concurrency);
+        factory.setMaxConcurrentConsumers(concurrency);
         return factory;
     }
 }

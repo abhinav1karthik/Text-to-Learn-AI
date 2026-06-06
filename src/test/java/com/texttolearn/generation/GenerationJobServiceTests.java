@@ -121,6 +121,65 @@ class GenerationJobServiceTests {
     }
 
     @Test
+    void courseWorkerEnqueuesOnlyFirstTwoLessonsAsLowPriorityPregenerationJobs() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|low-pregen-user", "low-pregen@example.com", "Low Pregen Student", null)
+        );
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Low priority lesson pregeneration"
+        );
+        generationJobPublisher.clear();
+
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+
+        List<GenerationJob> lessonJobs = generationJobPublisher.publishedJobs().stream()
+                .filter(job -> job.type() == GenerationJobType.LESSON_CONTENT)
+                .map(PublishedJob::id)
+                .map(jobId -> generationJobRepository.findById(jobId).orElseThrow())
+                .toList();
+        assertThat(lessonJobs).hasSize(2);
+        assertThat(lessonJobs).extracting(GenerationJob::getPriority)
+                .containsExactly(GenerationJobPriority.LOW, GenerationJobPriority.LOW);
+        assertThat(lessonJobs).extracting(GenerationJob::getPrompt)
+                .containsExactly("What is a Segment Tree?", "Building a Segment Tree");
+    }
+
+    @Test
+    void openingLowPriorityPregeneratedLessonPromotesExistingJobToHighPriority() {
+        AppUser user = appUserRepository.save(
+                new AppUser("auth0|low-promotion-user", "low-promotion@example.com", "Low Promotion Student", null)
+        );
+        GenerationJobResponse queuedJob = generationJobService.createCourseGenerationJob(
+                user,
+                "Promote low priority lesson pregeneration"
+        );
+        generationJobWorker.processCourseGenerationJob(queuedJob.id());
+        GenerationJobResponse completedCourseJob = generationJobService.getJobForUser(user, queuedJob.id());
+        CourseResponse course = courseService.getCourseForUser(user, completedCourseJob.courseId());
+        GenerationJob lowPriorityJob = generationJobRepository
+                .findFirstByLessonIdAndTypeAndStatusInOrderByCreatedAtDesc(
+                        course.modules().getFirst().lessons().getFirst().id(),
+                        GenerationJobType.LESSON_CONTENT,
+                        List.of(GenerationJobStatus.QUEUED, GenerationJobStatus.RUNNING)
+                )
+                .orElseThrow();
+        generationJobPublisher.clear();
+
+        generationJobService.createLessonGenerationJob(
+                user,
+                lowPriorityJob.getLessonId(),
+                lowPriorityJob.getPrompt(),
+                GenerationJobPriority.HIGH
+        );
+
+        GenerationJob promotedJob = generationJobRepository.findById(lowPriorityJob.getId()).orElseThrow();
+        assertThat(promotedJob.getPriority()).isEqualTo(GenerationJobPriority.HIGH);
+        assertThat(generationJobPublisher.publishedJobs())
+                .contains(new PublishedJob(promotedJob.getId(), GenerationJobType.LESSON_CONTENT, GenerationJobPriority.HIGH));
+    }
+
+    @Test
     void duplicateCourseMessageDoesNotCreateDuplicateCourse() {
         AppUser user = appUserRepository.save(
                 new AppUser("auth0|duplicate-message-user", "duplicate@example.com", "Duplicate Student", null)
@@ -552,7 +611,11 @@ class GenerationJobServiceTests {
                     List.of(new GeneratedModuleOutline(
                             "Foundations",
                             "Core segment tree concepts.",
-                            List.of("What is a Segment Tree?")
+                            List.of(
+                                    "What is a Segment Tree?",
+                                    "Building a Segment Tree",
+                                    "Range Sum Queries"
+                            )
                     ))
             );
         }
