@@ -39,7 +39,8 @@ The project is built as a production-shaped Java + React application with OAuth2
 - Cloudflare R2 audio storage with metadata stored in PostgreSQL.
 - Responsive React + Vite frontend using Tailwind CSS and dark mode.
 - GitHub Actions CI for backend tests and frontend production builds.
-- Dockerized backend, frontend, and local PostgreSQL setup through Docker Compose.
+- Dockerized backend, frontend, local PostgreSQL, and RabbitMQ setup through Docker Compose.
+- RabbitMQ-backed AI job pipeline with durable queues, priority lesson workers, retry/backoff, republishing, and stale-job recovery.
 - User-specific course storage through protected APIs.
 
 ## Current Architecture
@@ -54,25 +55,30 @@ flowchart LR
     Security --> Auth0JWKS[Auth0 JWKS + Audience Validation]
 
     API --> Jobs[(generation_jobs)]
-    API --> Rabbit[RabbitMQ Durable Queues]
-    Rabbit --> CourseWorker[Course Queue Consumer]
-    Rabbit --> HighLessonWorker[High Priority Lesson Consumer]
-    Rabbit --> LowLessonWorker[Low Priority Lesson Consumer]
+    API --> Rabbit[RabbitMQ Direct Exchange]
+    Rabbit --> CourseQueue[course.generation.queue]
+    Rabbit --> HighQueue[lesson.generation.high.queue]
+    Rabbit --> LowQueue[lesson.generation.low.queue]
+    CourseQueue --> CourseWorker[Course Queue Consumer]
+    HighQueue --> HighLessonWorker[High Priority Lesson Consumer]
+    LowQueue --> LowLessonWorker[Low Priority Lesson Consumer]
     CourseWorker --> Gemini
     HighLessonWorker --> Gemini
     LowLessonWorker --> Gemini
+    HighLessonWorker --> YouTube[YouTube Data API]
+    LowLessonWorker --> YouTube
     CourseWorker --> DB[(PostgreSQL / Neon)]
     HighLessonWorker --> DB
     LowLessonWorker --> DB
     API --> DB
-    API --> YouTube[YouTube Data API]
+    API --> YouTube
     API --> R2[Cloudflare R2]
     API --> PDF[OpenHTMLToPDF]
 
     DB --> Flyway[Flyway Migrations]
 ```
 
-The React client talks only to the Spring Boot API. The backend owns authentication validation, database access, AI calls, video lookup, audio storage, and PDF generation. PostgreSQL is the source of truth for users, courses, modules, lessons, generated JSON content, generated audio metadata, and generation job state. RabbitMQ is used only for durable delivery of lightweight job messages; each message carries a job id, and workers load the authoritative job state from PostgreSQL.
+The React client talks only to the Spring Boot API. The backend owns authentication validation, database access, AI calls, video lookup, audio storage, and PDF generation. PostgreSQL is the source of truth for users, courses, modules, lessons, generated JSON content, generated audio metadata, and generation job state. RabbitMQ is used only for durable delivery of lightweight job messages; each message carries a job id, and workers load the authoritative job state from PostgreSQL. A republisher scheduler recovers missed publishes, and a stuck-job recovery scheduler requeues stale `RUNNING` jobs after conservative timeouts.
 
 ## Request Flow
 
@@ -104,7 +110,7 @@ sequenceDiagram
     G-->>W: Course title, description, tags, modules, lesson titles
     W->>W: Parse and validate outline
     W->>DB: Save course, modules, planned lessons with generation_job_id
-    W->>DB: Enqueue first planned lessons as LOW priority jobs
+    W->>DB: Create and publish LOW priority jobs for first 1-2 planned lessons
     W->>DB: Mark job SUCCEEDED with course_id
     W-->>MQ: Ack message after DB commit
     API-->>UI: Job status SUCCEEDED with courseId
@@ -211,6 +217,25 @@ The backend is a Java 21 Spring Boot application.
 - Cloudflare R2 via AWS S3 SDK
 - OpenHTMLToPDF
 
+### Queue Reliability Model
+
+The generation pipeline is designed around at-least-once message delivery:
+
+- RabbitMQ queues and the direct exchange are durable.
+- Published job messages are persistent.
+- RabbitMQ messages contain only `{ "jobId": "..." }`.
+- Workers use manual acknowledgements and acknowledge only after the database transition is complete.
+- Consumer prefetch is `1` for long-running AI work so one worker does not hoard messages.
+- High-priority lesson generation has a small dedicated concurrency, while low-priority background generation is kept at concurrency `1`.
+- PostgreSQL decides whether a job should actually run. Duplicate RabbitMQ deliveries are safe because workers atomically claim only `QUEUED` jobs.
+- Course creation is idempotent because `courses.generation_job_id` is unique.
+- Active job partial indexes prevent duplicate active course jobs per user and duplicate active lesson jobs per lesson.
+- Retryable errors are requeued with backoff; permanent errors fail fast.
+- The republisher scheduler republishes due `QUEUED` jobs whose `last_published_at` is old or missing.
+- The recovery scheduler requeues stale `RUNNING` jobs after `20` minutes for course jobs and `10` minutes for lesson jobs.
+
+This gives effectively-once side effects on top of RabbitMQ's at-least-once delivery model.
+
 ## Frontend Architecture
 
 The frontend is a React 19 + Vite 7 single-page application.
@@ -270,6 +295,7 @@ erDiagram
     COURSE_MODULES ||--o{ LESSONS : contains
     LESSONS ||--o{ LESSON_AUDIO : has
     COURSES ||--o{ GENERATION_JOBS : completes
+    LESSONS ||--o{ GENERATION_JOBS : generates
 
     APP_USERS {
         uuid id PK
@@ -284,6 +310,7 @@ erDiagram
     COURSES {
         uuid id PK
         uuid user_id FK
+        uuid generation_job_id UK
         text prompt
         varchar title
         text description
@@ -298,9 +325,18 @@ erDiagram
         uuid user_id FK
         varchar type
         varchar status
+        varchar priority
         text prompt
         uuid course_id FK
+        uuid lesson_id FK
         text error_message
+        int attempt_count
+        int max_attempts
+        timestamptz next_run_at
+        timestamptz locked_at
+        varchar locked_by
+        varchar last_error_type
+        timestamptz last_published_at
         timestamptz created_at
         timestamptz updated_at
         timestamptz started_at
@@ -353,12 +389,26 @@ erDiagram
 - RabbitMQ queues carry only lightweight job ids. PostgreSQL remains the source of truth for job ownership, state, retry attempts, locks, and result ids.
 - Generation workers atomically claim queued jobs, increment attempt counts, and acknowledge RabbitMQ messages only after database state is committed.
 - Course creation is idempotent through `courses.generation_job_id`, so duplicate RabbitMQ deliveries do not create duplicate courses.
-- Active job constraints and pessimistic locking prevent duplicate active course jobs per user and duplicate active lesson jobs per lesson.
+- Partial unique indexes prevent duplicate active course jobs per user and duplicate active lesson jobs per lesson.
+- Atomic job claiming changes a job from `QUEUED` to `RUNNING`, increments `attempt_count`, and sets `locked_at`, `locked_by`, and `started_at` in one database transition.
 - Retry/backoff, failure classification, republishing, and stuck-job recovery protect the queue from transient AI/API failures and crashed workers.
 - Generated lesson content is stored as JSONB in `lessons.content_json` because each lesson contains flexible block types.
 - Lesson objectives are stored as JSONB in `lessons.objectives_json`.
 - YouTube video metadata is embedded inside video blocks in `content_json`, so the PDF and UI show the same selected videos.
 - Generated audio files are stored outside the database in Cloudflare R2. PostgreSQL stores only metadata and object keys.
+
+### Flyway Migration History
+
+| Migration | Purpose |
+| --------- | ------- |
+| `V1__create_learning_items.sql` | Initial learning item experiment |
+| `V2__replace_learning_items_with_course_schema.sql` | Replaced the initial table with course/module/lesson schema |
+| `V3__align_course_schema_with_roadmap.sql` | Aligned course fields with the generated course roadmap |
+| `V4__create_lesson_audio.sql` | Added audio metadata storage for generated lesson audio |
+| `V5__create_generation_jobs.sql` | Added async course generation job tracking |
+| `V6__upgrade_generation_jobs_for_queueing.sql` | Added priority, retry, locking, publishing, and lesson-job fields |
+| `V7__create_generation_job_active_partial_indexes.java` | Added PostgreSQL partial unique indexes for active job protection while keeping tests portable |
+| `V8__increase_generation_job_retry_attempts.sql` | Increased default retry attempts for generation jobs |
 
 ## AI Generation Design
 
@@ -459,6 +509,7 @@ Security behavior:
 | YouTube Data API | Educational video lookup for lesson video blocks                         |
 | Cloudflare R2    | Persistent storage for generated WAV audio files                         |
 | PostgreSQL/Neon  | Main relational database                                                 |
+| RabbitMQ         | Durable delivery for course and lesson generation jobs                   |
 
 ## API Overview
 
@@ -468,18 +519,22 @@ All endpoints except `/api/health` require an Auth0 Bearer token.
 | ------ | ------------------------------------------------------------------------- | ---------------------------------------------- |
 | `GET`  | `/api/health`                                                             | Public health check                            |
 | `GET`  | `/api/users/me`                                                           | Sync and return the current authenticated user |
-| `POST` | `/api/courses`                                                            | Generate and persist a new course outline      |
+| `POST` | `/api/generation-jobs/course`                                             | Create an async course generation job          |
+| `GET`  | `/api/generation-jobs/{jobId}`                                            | Poll a user-owned generation job               |
+| `POST` | `/api/courses`                                                            | Direct synchronous course creation path        |
 | `GET`  | `/api/courses`                                                            | List current user's courses                    |
 | `GET`  | `/api/courses/{courseId}`                                                 | Get one course outline                         |
-| `GET`  | `/api/courses/{courseId}/module/{moduleIndex}/lesson/{lessonIndex}`       | Return stored lesson or lazily generate it     |
+| `GET`  | `/api/courses/{courseId}/module/{moduleIndex}/lesson/{lessonIndex}`       | Return a generated lesson or enqueue/reuse a lesson job |
 | `GET`  | `/api/courses/{courseId}/module/{moduleIndex}/lesson/{lessonIndex}/audio` | Generate or fetch lesson audio                 |
 | `GET`  | `/api/courses/{courseId}/module/{moduleIndex}/lesson/{lessonIndex}/pdf`   | Generate a lesson PDF                          |
 | `GET`  | `/api/youtube?query=...&maxResults=...`                                   | Search YouTube educational videos              |
 
-### Example Course Request
+The frontend uses the async generation-job endpoint for course creation. The direct `POST /api/courses` path is kept as a synchronous service path for development/testing, but the production-shaped user flow is queue-backed.
+
+### Example Async Course Request
 
 ```http
-POST /api/courses
+POST /api/generation-jobs/course
 Authorization: Bearer <access-token>
 Content-Type: application/json
 
@@ -487,6 +542,23 @@ Content-Type: application/json
   "topic": "Segment Trees and Its Applications"
 }
 ```
+
+Example response:
+
+```json
+{
+  "id": "2b7a6a54-f2c3-4f7f-8a9d-47abfe90bd23",
+  "type": "COURSE_OUTLINE",
+  "status": "QUEUED",
+  "priority": "NORMAL",
+  "prompt": "Segment Trees and Its Applications",
+  "courseId": null,
+  "lessonId": null,
+  "errorMessage": null
+}
+```
+
+The client then polls `GET /api/generation-jobs/{jobId}` until the status becomes `SUCCEEDED` or `FAILED`.
 
 ### Example Lesson Content Shape
 
@@ -536,10 +608,18 @@ Content-Type: application/json
 | `SPRING_DATASOURCE_URL`             | Yes                  | PostgreSQL JDBC URL                                |
 | `SPRING_DATASOURCE_USERNAME`        | Yes                  | Database username                                  |
 | `SPRING_DATASOURCE_PASSWORD`        | Yes                  | Database password                                  |
+| `RABBITMQ_HOST`                     | Yes for queues       | RabbitMQ host                                      |
+| `RABBITMQ_PORT`                     | Yes for queues       | RabbitMQ AMQP port                                 |
+| `RABBITMQ_USERNAME`                 | Yes for queues       | RabbitMQ username                                  |
+| `RABBITMQ_PASSWORD`                 | Yes for queues       | RabbitMQ password                                  |
 | `AUTH0_ISSUER_URI`                  | Yes for auth         | Auth0 issuer URL                                   |
 | `AUTH0_AUDIENCE`                    | Yes for auth         | API audience expected in access tokens             |
 | `AUTH0_JWK_SET_URI`                 | Optional             | Auth0 JWKS URL; derived from issuer if omitted     |
 | `APP_CORS_ALLOWED_ORIGINS`          | Recommended          | Allowed frontend origins                           |
+| `APP_GENERATION_REPUBLISHER_ENABLED` | Optional            | Enables missed-publish recovery                    |
+| `APP_GENERATION_REPUBLISHER_FIXED_DELAY_MS` | Optional     | Republisher scheduler delay                        |
+| `APP_GENERATION_RECOVERY_ENABLED`   | Optional             | Enables stale running-job recovery                 |
+| `APP_GENERATION_RECOVERY_FIXED_DELAY_MS` | Optional        | Stuck-job recovery scheduler delay                 |
 | `AI_PROVIDER`                       | Optional             | `gemini` by default, `openai` also supported       |
 | `GEMINI_API_KEY`                    | Yes for Gemini       | Gemini API key                                     |
 | `GEMINI_MODEL`                      | Optional             | Defaults to `gemini-2.5-flash`                     |
@@ -663,6 +743,8 @@ lesson.generation.high.queue
 lesson.generation.low.queue
 ```
 
+If RabbitMQ starts but the queue list is empty, check the backend logs. The queues are declared by the Spring Boot app on startup through RabbitAdmin, so RabbitMQ alone can be healthy while no generation queues exist yet.
+
 To stop the stack:
 
 ```bash
@@ -677,12 +759,12 @@ docker compose down -v
 
 ### Option B: Run Manually
 
-#### 1. Start PostgreSQL Locally
+#### 1. Start PostgreSQL And RabbitMQ Locally
 
-You can start only the Docker PostgreSQL service:
+You can start only the local infrastructure services from Docker Compose:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres rabbitmq
 ```
 
 This starts PostgreSQL with:
@@ -692,6 +774,15 @@ Database: text_to_learn
 User: text_to_learn
 Password: text_to_learn
 Port: 5433 on your Mac, forwarded to 5432 inside the container
+```
+
+It also starts RabbitMQ with:
+
+```text
+Management UI: http://localhost:15672
+AMQP port:     localhost:5672
+User:          text_to_learn
+Password:      text_to_learn
 ```
 
 #### 2. Start The Backend
@@ -712,6 +803,11 @@ export AUTH0_AUDIENCE='https://text-to-learn-api'
 export SPRING_DATASOURCE_URL='jdbc:postgresql://localhost:5433/text_to_learn'
 export SPRING_DATASOURCE_USERNAME='text_to_learn'
 export SPRING_DATASOURCE_PASSWORD='text_to_learn'
+
+export RABBITMQ_HOST='localhost'
+export RABBITMQ_PORT='5672'
+export RABBITMQ_USERNAME='text_to_learn'
+export RABBITMQ_PASSWORD='text_to_learn'
 
 export AI_PROVIDER='gemini'
 export GEMINI_API_KEY='your-gemini-api-key'
@@ -779,6 +875,11 @@ Current tests cover:
 - Spring Boot context loading
 - Course repository behavior
 - Course service video enrichment and lesson ordering behavior
+- Generation job creation, ownership checks, duplicate active-job reuse, and priority promotion
+- RabbitMQ-backed worker behavior through the generation service abstraction
+- Idempotent course result creation for duplicate course job processing
+- Low-priority lesson pre-generation after course creation
+- Retryable and permanent failure handling, backoff, republishing, and stale-job recovery
 - Gemini parsing and fallback behavior
 - Prompt builder rules
 - YouTube response parsing
@@ -830,6 +931,7 @@ This project intentionally keeps some production concerns simple while the core 
 - Frontend progress updates use polling with backoff. WebSocket/STOMP updates can be added later for lower-latency notifications.
 - There is no semantic/vector cache yet for similar lesson reuse.
 - Retry/failure state is stored in PostgreSQL, but there is no RabbitMQ dead-letter queue dashboard yet.
+- The backend has active-job guardrails, but does not yet enforce per-user daily AI quota limits.
 - YouTube cache is in-memory, so it resets when the backend restarts.
 - The local Docker Compose stack is production-like for development, but cloud deployment and CD are still future work.
 
@@ -842,10 +944,15 @@ flowchart TD
     UI[React Client] --> API[Spring Boot API]
     API --> DB[(PostgreSQL)]
     API --> Jobs[(generation_jobs)]
+    API --> MQ[RabbitMQ Durable Queues]
+    Jobs --> Republisher[Due Job Republisher]
+    Jobs --> Recovery[Stuck Job Recovery]
+    Republisher --> MQ
+    Recovery --> Jobs
 
-    Jobs --> CourseWorker[Course Generation Worker]
-    Jobs --> HighWorker[High Priority Lesson Worker]
-    Jobs --> LowWorker[Low Priority Lesson Worker]
+    MQ --> CourseWorker[Course Generation Worker]
+    MQ --> HighWorker[High Priority Lesson Worker]
+    MQ --> LowWorker[Low Priority Lesson Worker]
 
     CourseWorker --> Gemini[Gemini API]
     HighWorker --> Gemini
@@ -865,7 +972,8 @@ Planned improvements:
 2. Split the API and RabbitMQ workers into separately scalable deployment units.
 3. Add WebSocket/STOMP notifications while keeping polling as a fallback.
 4. Add RabbitMQ dead-letter queues and an operational failure dashboard.
-5. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
+5. Add per-user daily quota limits and admin-visible AI usage metrics.
+6. Add semantic caching with embeddings/vector search to reduce duplicate AI calls for similar lessons.
 
 ## Resume Highlights
 
@@ -874,7 +982,7 @@ Text To Learn AI demonstrates:
 - Full-stack AI application development with Java, Spring Boot, React, and PostgreSQL.
 - LLM prompt design for structured JSON generation.
 - Backend AI validation, normalization, retry handling, and fallback behavior.
-- RabbitMQ-backed async generation with PostgreSQL job state, atomic claiming, retry/backoff, stuck-job recovery, priority lesson queues, quota controls, and polling-based progress tracking.
+- RabbitMQ-backed async generation with PostgreSQL job state, atomic claiming, retry/backoff, stuck-job recovery, priority lesson queues, active-job guardrails, and polling-based progress tracking.
 - Lazy generation and persistence to avoid repeated AI calls for generated lessons.
 - OAuth2/JWT authentication with Auth0 and Spring Security.
 - Integration with Gemini, YouTube Data API, and Cloudflare R2.
