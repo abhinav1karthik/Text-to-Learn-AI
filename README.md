@@ -21,6 +21,7 @@ The project is built as a production-shaped Java + React application with OAuth2
 - [Testing](#testing)
 - [Project Structure](#project-structure)
 - [Current Limitations](#current-limitations)
+- [Implemented Queue Architecture](#implemented-queue-architecture)
 - [Production Roadmap](#production-roadmap)
 - [Resume Highlights](#resume-highlights)
 
@@ -935,9 +936,9 @@ This project intentionally keeps some production concerns simple while the core 
 - YouTube cache is in-memory, so it resets when the backend restarts.
 - The local Docker Compose stack is production-like for development, but cloud deployment and CD are still future work.
 
-## Production Roadmap
+## Implemented Queue Architecture
 
-The next production-oriented backend upgrades are:
+The current async course and lesson generation pipeline is:
 
 ```mermaid
 flowchart TD
@@ -965,6 +966,10 @@ flowchart TD
     API --> Polling[Frontend Polling]
     Polling --> UI
 ```
+
+This flow is already implemented locally through Spring Boot, PostgreSQL, RabbitMQ, Gemini workers, and frontend polling. The remaining roadmap is about deployment hardening, observability, and further scaling.
+
+## Production Roadmap
 
 Planned improvements:
 
